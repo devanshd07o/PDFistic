@@ -1,0 +1,188 @@
+.key-vault-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15,23,42,0.28);
+  backdrop-filter: blur(3px);
+}
+.key-vault {
+  width: min(420px, calc(100vw - 32px));
+  border-radius: 10px;
+  border: 1px solid var(--lt-border);
+  background: #fff;
+  color: var(--lt-text);
+  box-shadow: 0 24px 70px rgba(15,23,42,0.22);
+}
+.dark .key-vault {
+  border-color: var(--border);
+  background: #141418;
+  color: var(--text);
+}
+.key-vault-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 16px 12px;
+  border-bottom: 1px solid var(--lt-border);
+}
+.dark .key-vault-head { border-bottom-color: var(--border); }
+.key-vault-head h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+}
+.key-vault-head p {
+  margin-top: 4px;
+  color: var(--lt-text-dim);
+  font-size: 12px;
+}
+.dark .key-vault-head p { color: var(--text-dim); }
+.vault-close {
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+}
+.vault-close:hover { background: rgba(0,0,0,0.06); }
+.dark .vault-close:hover { background: rgba(255,255,255,0.07); }
+
+.key-provider-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+}
+.key-provider-row {
+  display: grid;
+  grid-template-columns: 10px 78px 1fr 26px 16px;
+  grid-template-rows: 28px 28px 24px;
+  align-items: center;
+  gap: 5px 8px;
+  padding: 9px;
+  border-radius: 8px;
+  border: 1px solid var(--lt-border);
+  background: rgba(0,0,0,0.015);
+}
+.dark .key-provider-row {
+  border-color: var(--border);
+  background: rgba(255,255,255,0.03);
+}
+.provider-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--provider-color);
+}
+.provider-name {
+  font-size: 12px;
+  font-weight: 700;
+}
+.provider-key-input {
+  min-width: 0;
+  height: 28px;
+  border: 0.5px solid var(--lt-border);
+  border-radius: 7px;
+  padding: 0 8px;
+  background: #fff;
+  color: var(--lt-text);
+  outline: 0;
+  font-size: 12px;
+}
+.dark .provider-key-input {
+  border-color: var(--border-strong);
+  background: rgba(255,255,255,0.05);
+  color: var(--text);
+}
+.provider-eye {
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--lt-text-dim);
+  cursor: pointer;
+}
+.dark .provider-eye { color: var(--text-dim); }
+.saved-mark {
+  color: #16a34a;
+  font-size: 13px;
+  font-weight: 900;
+}
+.provider-model-select {
+  grid-column: 2 / 6;
+  height: 28px;
+  min-width: 0;
+  border: 0.5px solid var(--lt-border);
+  border-radius: 7px;
+  padding: 0 8px;
+  background: #fff;
+  color: var(--lt-text);
+  outline: 0;
+  font-size: 11px;
+}
+.dark .provider-model-select {
+  border-color: var(--border-strong);
+  background: rgba(255,255,255,0.05);
+  color: var(--text);
+}
+.provider-test {
+  grid-column: 2;
+  grid-row: 3;
+  width: fit-content;
+  border: 0;
+  border-radius: 999px;
+  padding: 5px 10px;
+  background: #eeedfe;
+  color: #534ab7;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 800;
+}
+.provider-test:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.test-status {
+  grid-row: 3;
+  grid-column: 3 / 6;
+  color: var(--lt-text-dim);
+  font-size: 11px;
+}
+.dark .test-status { color: var(--text-dim); }
+.test-status.working { color: #16a34a; }
+.test-status.failed { color: #dc2626; }
+
+.key-vault-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 14px 14px;
+  border-top: 1px solid var(--lt-border);
+}
+.dark .key-vault-actions { border-top-color: var(--border); }
+.vault-btn {
+  border: 0;
+  border-radius: 7px;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+.vault-btn.ghost {
+  background: transparent;
+  color: var(--lt-text-dim);
+}
+.dark .vault-btn.ghost { color: var(--text-dim); }
+.vault-btn.primary {
+  background: #534ab7;
+  color: #fff;
+}
