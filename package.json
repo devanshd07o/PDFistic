@@ -1,6 +1,6 @@
 {
   "name": "pdfistic",
-  "version": "1.0.7",
+  "version": "1.0.11",
   "description": "PDFistic - Premium PDF Reader",
   "main": "electron/main.js",
   "scripts": {
@@ -38,12 +38,20 @@
     ],
     "extraResources": [
       {
-        "from": "build/icon.ico",
+        "from": "public/icon.ico",
         "to": "icon.ico"
+      },
+      {
+        "from": "python",
+        "to": "python",
+        "filter": [
+          "google_stt.py",
+          "requirements.txt"
+        ]
       }
     ],
     "win": {
-      "icon": "build/icon.ico",
+      "icon": "public/icon.ico",
       "executableName": "PDFistic",
       "signAndEditExecutable": false,
       "target": [

@@ -321,7 +321,7 @@ export default function PDFViewer({
         {isDragging
           ? <div className="drop-hint"><div className="drop-icon">↓</div><p>Drop PDF here</p></div>
           : <div className="empty-state">
-              <img className="empty-logo" src="./icon.png" alt="PDFistic" />
+              <img className="empty-logo" src="./icon.ico" alt="PDFistic" />
               <p className="empty-sub">Drop a PDF file or click Open</p>
               {recentFiles.length > 0 && (
                 <div className="recent-section">

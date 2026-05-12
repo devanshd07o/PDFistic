@@ -22,7 +22,7 @@ export default function Titlebar({ theme, fileName }) {
     <div className={`titlebar ${theme}`}>
       <div className="titlebar-drag" onDoubleClick={() => window.electronAPI.maximize()}>
         <span className="app-logo">
-          <img className="app-logo-img" src="./icon.png" alt="PDFistic" />
+          <img className="app-logo-img" src="./icon.ico" alt="PDFistic" />
         </span>
         {fileName && <span className="file-name-title">— {fileName}</span>}
       </div>

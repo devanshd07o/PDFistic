@@ -4,6 +4,7 @@ import './AIPanel.css'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const STORAGE_KEY = 'pdfistic-chat'
+const MIC_PAUSE_MS = 2000
 
 const PROMPT_TEMPLATES = [
   { label: '📝 Summarize', text: 'Summarize this page in bullet points.' },
@@ -51,6 +52,21 @@ const RegenIcon = () => (
     stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <path d="M21 12a9 9 0 1 1-2.64-6.36"/>
     <path d="M21 3v6h-6"/>
+  </svg>
+)
+
+const MicIcon = ({ active }) => (
+  <svg width="13" height="13" viewBox="0 0 24 24" fill={active ? 'currentColor' : 'none'}
+    stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="9" y="2" width="6" height="11" rx="3"/>
+    <path d="M5 10a7 7 0 0 0 14 0M12 19v3M8 22h8"/>
+  </svg>
+)
+
+const SparkleIcon = () => (
+  <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
+    stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M12 3l1.5 5.5L19 10l-5.5 1.5L12 17l-1.5-5.5L5 10l5.5-1.5z"/>
   </svg>
 )
 
@@ -185,10 +201,34 @@ export default function AIPanel({
   const chatRef      = useRef(null)
   const isLoadingRef = useRef(false)
 
-  const [modelMenuOpen, setModelMenuOpen] = useState(false)
+  const [modelMenuOpen, setModelMenuOpen]   = useState(false)
+  const [templatesOpen, setTemplatesOpen] = useState(false)
   const [copiedId, setCopiedId]           = useState(null)
+  const [micListening, setMicListening]   = useState(false)
+  const recognitionRef = useRef(null)
+  const micPauseTimerRef = useRef(null)
+  const micBaseInputRef = useRef('')
+  const micStopRequestedRef = useRef(false)
 
   const isLoading = messages.some(m => m.streaming)
+
+  const clearMicPauseTimer = () => {
+    if (!micPauseTimerRef.current) return
+    window.clearTimeout(micPauseTimerRef.current)
+    micPauseTimerRef.current = null
+  }
+
+  const stopMicRecognition = () => {
+    micStopRequestedRef.current = true
+    clearMicPauseTimer()
+    window.electronAPI?.stopSpeechRecognition?.()
+    const recognition = recognitionRef.current
+    recognitionRef.current = null
+    if (recognition) {
+      try { recognition.stop() } catch {}
+    }
+    setMicListening(false)
+  }
 
   // ── Persist chat ─────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -221,6 +261,11 @@ export default function AIPanel({
   useEffect(() => {
     chatRef.current?.scrollTo({ top: chatRef.current.scrollHeight, behavior: 'smooth' })
   }, [messages])
+
+  useEffect(() => () => {
+    clearMicPauseTimer()
+    try { recognitionRef.current?.abort?.() } catch {}
+  }, [])
 
   // ── Resize handle ────────────────────────────────────────────────────────────
   const startResize = (e) => {
@@ -297,6 +342,112 @@ export default function AIPanel({
       setCopiedId(id)
       setTimeout(() => setCopiedId(null), 1500)
     }).catch(() => {})
+  }
+
+  // ── Mic / Speech-to-text ─────────────────────────────────────────────────────
+  const toggleMic = async () => {
+    if (micListening || recognitionRef.current) {
+      stopMicRecognition()
+      return
+    }
+
+    if (window.electronAPI?.recognizeSpeech) {
+      micBaseInputRef.current = input.trim() ? `${input.trim()} ` : ''
+      micStopRequestedRef.current = false
+      setMicListening(true)
+      try {
+        const result = await window.electronAPI.recognizeSpeech({ pauseMs: MIC_PAUSE_MS })
+        if (micStopRequestedRef.current) return
+        if (result?.ok) {
+          if (result.text?.trim()) {
+            const nextInput = `${micBaseInputRef.current}${result.text}`.replace(/\s+/g, ' ').trimStart()
+            setInput(nextInput)
+          }
+        } else {
+          alert(result?.error || 'Speech recognition failed.')
+        }
+      } catch (error) {
+        if (!micStopRequestedRef.current) alert(error?.message || 'Speech recognition failed.')
+      } finally {
+        setMicListening(false)
+      }
+      return
+    }
+
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!SR) { alert('Speech recognition not supported in this browser.'); return }
+
+    if (navigator.mediaDevices?.getUserMedia) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+        stream.getTracks().forEach(track => track.stop())
+      } catch {
+        alert('Microphone access was denied. Please allow mic permissions for this app.')
+        return
+      }
+    }
+
+    const recognition = new SR()
+    recognition.lang = 'en-IN'          // English with Indian locale
+    recognition.interimResults = true
+    recognition.continuous = true
+    recognition.maxAlternatives = 1
+    micBaseInputRef.current = input.trim() ? `${input.trim()} ` : ''
+    micStopRequestedRef.current = false
+
+    const schedulePauseStop = () => {
+      clearMicPauseTimer()
+      micPauseTimerRef.current = window.setTimeout(() => {
+        micStopRequestedRef.current = true
+        try { recognition.stop() } catch {}
+      }, MIC_PAUSE_MS)
+    }
+
+    recognition.onresult = (e) => {
+      let finalTranscript = ''
+      let interimTranscript = ''
+      for (let i = 0; i < e.results.length; i++) {
+        const transcript = e.results[i]?.[0]?.transcript || ''
+        if (e.results[i].isFinal) finalTranscript += `${transcript} `
+        else interimTranscript += transcript
+      }
+      const nextInput = `${micBaseInputRef.current}${finalTranscript}${interimTranscript}`
+        .replace(/\s+/g, ' ')
+        .trimStart()
+      setInput(nextInput)
+      schedulePauseStop()
+    }
+    recognition.onspeechend = schedulePauseStop
+    recognition.onsoundend = schedulePauseStop
+    recognition.onend = () => {
+      clearMicPauseTimer()
+      recognitionRef.current = null
+      setMicListening(false)
+    }
+    recognition.onerror = (e) => {
+      clearMicPauseTimer()
+      recognitionRef.current = null
+      setMicListening(false)
+      if (e.error === 'not-allowed') {
+        alert('Microphone access was denied. Please allow mic permissions for this app.')
+      } else if (e.error === 'network') {
+        alert('Speech recognition service failed. Check your internet connection and try again.')
+      } else if (e.error === 'aborted' && micStopRequestedRef.current) {
+        return
+      } else if (e.error !== 'no-speech') {
+        console.warn('Speech recognition error:', e.error)
+      }
+    }
+
+    recognitionRef.current = recognition
+    try {
+      recognition.start()
+      setMicListening(true)
+    } catch (error) {
+      recognitionRef.current = null
+      setMicListening(false)
+      console.warn('Speech recognition could not start:', error)
+    }
   }
 
   const handleKeyDown = (e) => {
@@ -395,7 +546,7 @@ export default function AIPanel({
           </label>
         </div>
 
-        {/* ── Model selector ── */}
+        {/* ── Model + Templates row ── */}
         <div className="ai-control-row">
           {configuredModels.length === 0 ? (
             <button className="ai-add-key" type="button" onClick={onOpenKeyVault}>
@@ -404,7 +555,7 @@ export default function AIPanel({
           ) : (
             <div className="ai-model-dropup">
               <button className="ai-model-dropup-btn" type="button"
-                onClick={() => setModelMenuOpen(o => !o)}>
+                onClick={() => { setModelMenuOpen(o => !o); setTemplatesOpen(false) }}>
                 <span className="ai-model-dot" />
                 {modelLabel(selectedModel)}
                 <ChevronIcon />
@@ -422,16 +573,26 @@ export default function AIPanel({
               )}
             </div>
           )}
-        </div>
 
-        {/* ── Prompt templates ── */}
-        <div className="ai-templates">
-          {PROMPT_TEMPLATES.map(t => (
-            <button key={t.label} className="ai-template-btn" type="button"
-              onClick={() => setInput(t.text)} disabled={isLoading}>
-              {t.label}
+          {/* Templates dropup */}
+          <div className="ai-templates-dropup">
+            <button className="ai-templates-btn" type="button" disabled={isLoading}
+              onClick={() => { setTemplatesOpen(o => !o); setModelMenuOpen(false) }}>
+              <SparkleIcon />
+              Templates
+              <ChevronIcon />
             </button>
-          ))}
+            {templatesOpen && (
+              <div className="ai-templates-menu">
+                {PROMPT_TEMPLATES.map(t => (
+                  <button key={t.label} type="button"
+                    onClick={() => { setInput(t.text); setTemplatesOpen(false) }}>
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* ── Composer ── */}
@@ -445,6 +606,15 @@ export default function AIPanel({
             placeholder="Ask about this PDF…"
             disabled={isLoading}
           />
+          <button
+            className={`ai-mic-btn ${micListening ? 'listening' : ''}`}
+            type="button"
+            onClick={toggleMic}
+            title={micListening ? 'Stop listening' : 'Voice input'}
+            disabled={isLoading}
+          >
+            <MicIcon active={micListening} />
+          </button>
           <button className="ai-send-btn" type="button"
             onClick={handleSend} disabled={!input.trim() || isLoading}>
             <SendIcon />

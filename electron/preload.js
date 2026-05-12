@@ -13,6 +13,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setApiKeys: (keys) => ipcRenderer.invoke('set-api-keys', keys),
   getApiModels: () => ipcRenderer.invoke('get-api-models'),
   setApiModels: (models) => ipcRenderer.invoke('set-api-models', models),
+  recognizeSpeech: (options) => ipcRenderer.invoke('recognize-speech', options),
+  stopSpeechRecognition: () => ipcRenderer.invoke('stop-speech-recognition'),
   onOpenFile: (cb) => {
     const handler = (_, fp) => cb(fp)
     ipcRenderer.on('open-file', handler)

@@ -7,7 +7,7 @@ module.exports = async function afterPack(context) {
   const appName = context.packager.appInfo.productName || 'PDFistic'
   const exePath = path.join(context.appOutDir, `${appName}.exe`)
   const rceditPath = path.join(context.packager.projectDir, 'node_modules', 'electron-winstaller', 'vendor', 'rcedit.exe')
-  const iconPath = path.join(context.packager.projectDir, 'build', 'icon.ico')
+  const iconPath = path.join(context.packager.projectDir, 'public', 'icon.ico')
 
   execFileSync(rceditPath, [
     exePath,
