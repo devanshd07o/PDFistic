@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import * as pdfjsLib from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import Titlebar from './components/Titlebar'
@@ -8,6 +8,8 @@ import Sidebar from './components/Sidebar'
 import AIPanel from './components/AIPanel'
 import KeyVault from './components/KeyVault'
 import { PROVIDERS } from './utils/aiCall'
+import { createWorker } from 'tesseract.js'
+import { PREMIUM_FONTS } from './components/SettingsPanel'
 import './App.css'
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl
@@ -30,7 +32,7 @@ export default function App() {
   const [highlightColor, setHighlightColor] = useState('#facc15')
   const [highlights, setHighlights] = useState([])
   const [rotation, setRotation] = useState(0)
-  const [fitMode, setFitMode] = useState('custom')
+  const [fitMode, setFitMode] = useState('width')
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState([])
   const [searchIndex, setSearchIndex] = useState(-1)
@@ -47,6 +49,11 @@ export default function App() {
   const [keyVaultOpen, setKeyVaultOpen] = useState(false)
   const [pageTexts, setPageTexts] = useState({})
   const [aiPanelWidth, setAiPanelWidth] = useState(320)
+  const [fontId, setFontId] = useState('system')
+  const [fontSize, setFontSize] = useState(13)
+  const [ocrStatus, setOcrStatus] = useState('')
+  const ocrWorkerRef = useRef(null)
+  const chatFont = (PREMIUM_FONTS.find(f => f.id === fontId) || PREMIUM_FONTS[0]).value
 
   const applyApiKeys = useCallback((keys = {}) => {
     setApiKeys(keys)
@@ -147,18 +154,40 @@ export default function App() {
       .sort((a, b) => a.page - b.page)
   }
 
+  const getOcrWorker = async () => {
+    if (!ocrWorkerRef.current) {
+      const worker = await createWorker('eng')
+      ocrWorkerRef.current = worker
+    }
+    return ocrWorkerRef.current
+  }
+
   const extractPageTexts = async (doc) => {
-    const texts = {}
     for (let pageNum = 1; pageNum <= doc.numPages; pageNum++) {
       try {
         const page = await doc.getPage(pageNum)
         const content = await page.getTextContent()
-        texts[pageNum] = content.items.map(item => item.str).join(' ').replace(/\s+/g, ' ').trim()
+        const extracted = content.items.map(item => item.str).join(' ').replace(/\s+/g, ' ').trim()
+
+        if (extracted.length > 50) {
+          setPageTexts(prev => ({ ...prev, [pageNum]: extracted }))
+        } else {
+          // Fallback: OCR via offscreen canvas
+          setOcrStatus(`Scanning page ${pageNum} of ${doc.numPages}…`)
+          const canvas = document.createElement('canvas')
+          const vp = page.getViewport({ scale: 2 })
+          canvas.width = Math.floor(vp.width)
+          canvas.height = Math.floor(vp.height)
+          await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise
+          const worker = await getOcrWorker()
+          const { data: { text } } = await worker.recognize(canvas)
+          setPageTexts(prev => ({ ...prev, [pageNum]: text.trim() }))
+        }
       } catch {
-        texts[pageNum] = ''
+        setPageTexts(prev => ({ ...prev, [pageNum]: '' }))
       }
     }
-    setPageTexts(texts)
+    setOcrStatus('')
   }
 
   const goToPage = useCallback((page) => {
@@ -219,6 +248,25 @@ export default function App() {
     const timer = window.setTimeout(() => runSearch(searchQuery), 250)
     return () => window.clearTimeout(timer)
   }, [pdfDoc, searchQuery, runSearch])
+
+  const exportAiChat = () => {
+    if (!aiMessages.length) return
+    const lines = aiMessages.map(m => {
+      const role = m.role === 'ai' ? 'Assistant' : 'User'
+      const time = new Date(m.timestamp).toLocaleString()
+      return `[${role} · p.${m.page || 1} · ${time}]\n${m.text}`
+    })
+    const blob = new Blob([lines.join('\n\n---\n\n')], { type: 'text/plain' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = 'chat-export.txt'; a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const clearAiChat = () => {
+    if (aiMessages.some(m => m.streaming)) return
+    setAiMessages([])
+  }
 
   const handleDownload = async () => {
     if (!currentFile?.data?.length) return
@@ -282,6 +330,11 @@ export default function App() {
   useEffect(() => {
     return window.electronAPI?.onOpenFile((fp) => loadPDF(fp))
   }, [loadPDF])
+
+  // Cleanup OCR worker on unmount
+  useEffect(() => {
+    return () => { ocrWorkerRef.current?.terminate() }
+  }, [])
 
   useEffect(() => {
     refreshRecentFiles()
@@ -391,6 +444,12 @@ export default function App() {
         onDownload={handleDownload}
         onOpenKeyVault={() => setKeyVaultOpen(true)}
         pdfDoc={pdfDoc}
+        fontId={fontId} setFontId={setFontId}
+        fontSize={fontSize} setFontSize={setFontSize}
+        aiMessages={aiMessages}
+        onExportChat={exportAiChat}
+        onClearChat={clearAiChat}
+        aiIsLoading={aiMessages.some(m => m.streaming)}
       />
       <div className="main-area">
         <Sidebar
@@ -422,25 +481,14 @@ export default function App() {
           onClick={() => setAiPanelOpen(open => !open)}
           title={aiPanelOpen ? 'Collapse AI panel' : 'Ask AI'}
         >
-          {!aiPanelOpen && <span className="ai-tab-dot" />}
-          <span className="ai-tab-icon">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M9 3a3 3 0 0 0-3 3v1a3 3 0 0 0 0 6v1a4 4 0 0 0 4 4h1" />
-              <path d="M15 3a3 3 0 0 1 3 3v1a3 3 0 0 1 0 6v1a4 4 0 0 1-4 4h-1" />
-              <path d="M12 6v15" />
-              <path d="M8 8h2" />
-              <path d="M14 8h2" />
-            </svg>
-          </span>
-          {aiPanelOpen ? (
-            <span className="ai-tab-chevron">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M9 18l6-6-6-6" />
-              </svg>
-            </span>
-          ) : (
-            <span className="ai-tab-label">Ask AI</span>
-          )}
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M9 3a3 3 0 0 0-3 3v1a3 3 0 0 0 0 6v1a4 4 0 0 0 4 4h1" />
+            <path d="M15 3a3 3 0 0 1 3 3v1a3 3 0 0 1 0 6v1a4 4 0 0 1-4 4h-1" />
+            <path d="M12 6v15" />
+            <path d="M8 8h2" />
+            <path d="M14 8h2" />
+          </svg>
         </button>
         <AIPanel
           open={aiPanelOpen}
@@ -462,6 +510,8 @@ export default function App() {
           currentPage={currentPage}
           pageTexts={pageTexts}
           onOpenKeyVault={() => setKeyVaultOpen(true)}
+          chatFont={chatFont}
+          fontSize={fontSize}
         />
       </div>
       <KeyVault

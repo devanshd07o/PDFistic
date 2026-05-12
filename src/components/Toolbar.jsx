@@ -1,193 +1,204 @@
 import { useEffect, useRef, useState } from 'react'
-const ZOOMS = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0, 4.0]
-const HIGHLIGHT_COLORS = ['#facc15', '#fb7185', '#38bdf8', '#4ade80']
+import SettingsPanel from './SettingsPanel'
 
-const Icon = ({ d, size = 16 }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+const Icon = ({ d, size = 15 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+    stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
     <path d={d} />
   </svg>
 )
 
 export default function Toolbar({
-  currentPage, totalPages, zoom, setZoom, theme, setTheme, setSidebarOpen,
-  onOpenFile, onPageChange, onCreateDesktopShortcut, shortcutStatus,
-  toolMode, setToolMode, highlightColor, setHighlightColor, onClearHighlights, highlightsOnPage,
-  rotation, setRotation, fitMode, setFitMode, pdfDoc,
-  searchQuery, setSearchQuery, searchResults, searchIndex, isSearching, onRunSearch, onStepSearchResult,
-  onDownload, onOpenKeyVault
+  // Page nav
+  currentPage, totalPages, onPageChange, pdfDoc,
+  // Sidebar
+  setSidebarOpen,
+  // File
+  onOpenFile,
+  // Highlight
+  toolMode, setToolMode, highlightColor,
+  onClearHighlights, highlightsOnPage,
+  // Search
+  searchQuery, setSearchQuery, searchResults, searchIndex,
+  isSearching, onRunSearch, onStepSearchResult,
+  // Theme (passed through to settings)
+  theme,
+  // Settings panel props ─────────────────────────────────────────────────────
+  zoom, setZoom, fitMode, setFitMode, rotation, setRotation,
+  setTheme,
+  setHighlightColor,
+  fontId, setFontId, fontSize, setFontSize,
+  onCreateDesktopShortcut, shortcutStatus,
+  onDownload, onOpenKeyVault,
+  aiMessages, onExportChat, onClearChat, aiIsLoading,
 }) {
-  const [pageInput, setPageInput] = useState('')
+  const [pageInput, setPageInput]     = useState('')
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const searchInputRef = useRef(null)
+  const settingsBtnRef = useRef(null)
   const dis = !pdfDoc
-  const zoomOptions = ZOOMS.some(level => Math.abs(level - zoom) < 0.001)
-    ? ZOOMS
-    : [...ZOOMS, zoom].sort((a, b) => a - b)
+
   const searchLabel = isSearching
-    ? '...'
+    ? '…'
     : searchResults.length > 0
       ? `${searchIndex + 1}/${searchResults.length}`
-      : searchQuery
-        ? '0/0'
-        : ''
+      : searchQuery ? '0/0' : ''
 
+  // Focus search shortcut
   useEffect(() => {
-    const focusSearch = () => {
-      searchInputRef.current?.focus()
-      searchInputRef.current?.select()
-    }
-    window.addEventListener('pdfistic-focus-search', focusSearch)
-    return () => window.removeEventListener('pdfistic-focus-search', focusSearch)
+    const focus = () => { searchInputRef.current?.focus(); searchInputRef.current?.select() }
+    window.addEventListener('pdfistic-focus-search', focus)
+    return () => window.removeEventListener('pdfistic-focus-search', focus)
   }, [])
 
   const handlePageKey = (e) => {
     if (e.key === 'Enter') {
       const p = parseInt(pageInput, 10)
       if (Number.isFinite(p)) onPageChange(p)
-      setPageInput('')
-      e.target.blur()
+      setPageInput(''); e.target.blur()
     }
     if (e.key === 'Escape') { setPageInput(''); e.target.blur() }
   }
 
   const handleSearchKey = (e) => {
     if (e.key === 'Enter') onRunSearch(searchQuery)
-    if (e.key === 'Escape') {
-      setSearchQuery('')
-      onRunSearch('')
-      e.target.blur()
-    }
+    if (e.key === 'Escape') { setSearchQuery(''); onRunSearch(''); e.target.blur() }
   }
 
+  // Close settings when clicking the settings button while open
+  const toggleSettings = () => setSettingsOpen(o => !o)
+
   return (
-    <div className={`toolbar ${theme}`}>
-      <div className="tb-left">
-        <button className="tb-btn icon-btn" type="button" onClick={() => setSidebarOpen(s => !s)} title="Toggle Sidebar (Ctrl+B)">
-          <Icon d="M3 12h18M3 6h18M3 18h18" />
-        </button>
-        <button className="tb-btn open-btn" type="button" onClick={onOpenFile} title="Open PDF (Ctrl+O)">
-          <Icon d="M5 19a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h4l2 2h4a2 2 0 0 1 2 2v1" size={14} />
-          Open
-        </button>
-        {window.electronAPI && (
-          <button className="tb-btn icon-btn desktop-btn" type="button" onClick={onCreateDesktopShortcut} title="Add PDFistic to Desktop">
-            <Icon d="M4 5h16v11H4zM9 20h6M12 16v4" />
-          </button>
-        )}
-        {shortcutStatus && <span className="shortcut-status">{shortcutStatus}</span>}
-      </div>
+    <>
+      <div className={`toolbar ${theme}`}>
 
-      <div className="tb-center">
-        <button className="tb-btn icon-btn" type="button" onClick={() => onPageChange(1)} disabled={dis || currentPage <= 1} title="First Page (Home)">
-          <Icon d="M11 18l-6-6 6-6M19 18l-6-6 6-6" />
-        </button>
-        <button className="tb-btn icon-btn" type="button" onClick={() => onPageChange(currentPage - 1)} disabled={dis || currentPage <= 1} title="Previous Page (←)">
-          <Icon d="M15 18l-6-6 6-6" />
-        </button>
-        <div className="page-info">
-          <input
-            className="page-input"
-            type="number"
-            value={pageInput !== '' ? pageInput : (pdfDoc ? currentPage : '')}
-            min={1} max={totalPages}
-            onChange={e => setPageInput(e.target.value)}
-            onKeyDown={handlePageKey}
-            onFocus={e => e.target.select()}
-            onBlur={() => setPageInput('')}
-            disabled={dis}
-            placeholder="—"
-          />
-          <span className="page-sep">/ {totalPages || '—'}</span>
-        </div>
-        <button className="tb-btn icon-btn" type="button" onClick={() => onPageChange(currentPage + 1)} disabled={dis || currentPage >= totalPages} title="Next Page (→)">
-          <Icon d="M9 18l6-6-6-6" />
-        </button>
-        <button className="tb-btn icon-btn" type="button" onClick={() => onPageChange(totalPages)} disabled={dis || currentPage >= totalPages} title="Last Page (End)">
-          <Icon d="M5 18l6-6-6-6M13 18l6-6-6-6" />
-        </button>
-      </div>
-
-      <div className="tb-right">
-        <button className="tb-btn icon-btn" type="button" onClick={() => setZoom(z => +(z - 0.25).toFixed(2))} disabled={dis} title="Zoom Out (Ctrl+-)">
-          <Icon d="M21 21l-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0zM8 11h6" />
-        </button>
-        <select className="zoom-sel" value={zoom} onChange={e => setZoom(parseFloat(e.target.value))} disabled={dis} title="Zoom">
-          {zoomOptions.map(l => <option key={l} value={l}>{Math.round(l * 100)}%</option>)}
-        </select>
-        <button className="tb-btn icon-btn" type="button" onClick={() => setZoom(z => +(z + 0.25).toFixed(2))} disabled={dis} title="Zoom In (Ctrl+=)">
-          <Icon d="M21 21l-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0zM11 8v6M8 11h6" />
-        </button>
-        <button className="tb-btn txt-btn" type="button" onClick={() => setZoom(1.0)} disabled={dis} title="Actual Size (Ctrl+0)">100%</button>
-        <button className={`tb-btn txt-btn ${fitMode === 'width' ? 'active' : ''}`} type="button" onClick={() => setFitMode('width')} disabled={dis} title="Fit Width">Fit</button>
-        <button className="tb-btn icon-btn" type="button" onClick={() => setRotation((rotation + 90) % 360)} disabled={dis} title="Rotate Clockwise (R)">
-          <Icon d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6" />
-        </button>
-
-        <div className="tb-sep" />
-
-        <div className="search-box">
-          <Icon d="M21 21l-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0z" size={14} />
-          <input
-            ref={searchInputRef}
-            className="search-input"
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-            onKeyDown={handleSearchKey}
-            disabled={dis}
-            placeholder="Find"
-            title="Find Text (Ctrl+F)"
-          />
-          {searchLabel && <span className="search-count">{searchLabel}</span>}
-          <button className="mini-btn" type="button" onClick={() => onStepSearchResult(-1)} disabled={dis || searchResults.length === 0} title="Previous Match">
-            <Icon d="M18 15l-6-6-6 6" size={13} />
-          </button>
-          <button className="mini-btn" type="button" onClick={() => onStepSearchResult(1)} disabled={dis || searchResults.length === 0} title="Next Match">
-            <Icon d="M6 9l6 6 6-6" size={13} />
-          </button>
+        {/* ── LEFT ── sidebar + open ── */}
+        <div className="tb-left">
+          <div className="tb-group">
+            <button className="tb-btn icon-btn" type="button"
+              onClick={() => setSidebarOpen(s => !s)} title="Sidebar (Ctrl+B)">
+              <Icon d="M3 12h18M3 6h18M3 18h18" />
+            </button>
+            <div className="tb-group-divider" />
+            <button className="tb-btn open-btn" type="button"
+              onClick={onOpenFile} title="Open PDF (Ctrl+O)">
+              <Icon d="M5 19a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h4l2 2h4a2 2 0 0 1 2 2v1" size={13} />
+              Open
+            </button>
+          </div>
         </div>
 
-        <div className="tb-sep" />
+        {/* ── CENTER ── page nav + find ── */}
+        <div className="tb-center">
+          <div className="tb-group tb-group-nav">
+            <button className="tb-btn icon-btn" type="button"
+              onClick={() => onPageChange(1)} disabled={dis || currentPage <= 1} title="First Page">
+              <Icon d="M11 18l-6-6 6-6M19 18l-6-6 6-6" />
+            </button>
+            <button className="tb-btn icon-btn" type="button"
+              onClick={() => onPageChange(currentPage - 1)} disabled={dis || currentPage <= 1} title="Prev (←)">
+              <Icon d="M15 18l-6-6 6-6" />
+            </button>
+            <div className="page-info">
+              <input
+                className="page-input" type="number"
+                value={pageInput !== '' ? pageInput : (pdfDoc ? currentPage : '')}
+                min={1} max={totalPages}
+                onChange={e => setPageInput(e.target.value)}
+                onKeyDown={handlePageKey}
+                onFocus={e => e.target.select()}
+                onBlur={() => setPageInput('')}
+                disabled={dis} placeholder="—"
+              />
+              <span className="page-sep">/ {totalPages || '—'}</span>
+            </div>
+            <button className="tb-btn icon-btn" type="button"
+              onClick={() => onPageChange(currentPage + 1)} disabled={dis || currentPage >= totalPages} title="Next (→)">
+              <Icon d="M9 18l6-6-6-6" />
+            </button>
+            <button className="tb-btn icon-btn" type="button"
+              onClick={() => onPageChange(totalPages)} disabled={dis || currentPage >= totalPages} title="Last Page">
+              <Icon d="M5 18l6-6-6-6M13 18l6-6-6-6" />
+            </button>
+          </div>
 
-        <button className={`tb-btn tool-btn ${toolMode === 'select' ? 'active' : ''}`} type="button" onClick={() => setToolMode('select')} disabled={dis} title="Select / Scroll">
-          <Icon d="M4 3l7 17 2-7 7-2z" />
-        </button>
-        <button className={`tb-btn tool-btn ${toolMode === 'highlight' ? 'active' : ''}`} type="button" onClick={() => setToolMode(toolMode === 'highlight' ? 'select' : 'highlight')} disabled={dis} title="Highlight (H)">
-          <Icon d="M4 20h4l11-11a2.8 2.8 0 0 0-4-4L4 16v4zM13.5 6.5l4 4" />
-        </button>
-        <div className="swatches" aria-label="Highlight colors">
-          {HIGHLIGHT_COLORS.map(color => (
-            <button
-              key={color}
-              className={`swatch ${highlightColor === color ? 'active' : ''}`}
-              type="button"
-              style={{ '--swatch': color }}
-              onClick={() => setHighlightColor(color)}
+          <div className="tb-group tb-group-search">
+            <Icon d="M21 21l-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0z" size={13} />
+            <input
+              ref={searchInputRef}
+              className="search-input" value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              onKeyDown={handleSearchKey}
               disabled={dis}
-              title="Highlight Color"
+              placeholder="Find…"
+              title="Find Text (Ctrl+F)"
             />
-          ))}
+            {searchLabel && <span className="search-count">{searchLabel}</span>}
+            <button className="mini-btn" type="button"
+              onClick={() => onStepSearchResult(-1)} disabled={dis || searchResults.length === 0} title="Prev match">
+              <Icon d="M18 15l-6-6-6 6" size={12} />
+            </button>
+            <button className="mini-btn" type="button"
+              onClick={() => onStepSearchResult(1)} disabled={dis || searchResults.length === 0} title="Next match">
+              <Icon d="M6 9l6 6 6-6" size={12} />
+            </button>
+          </div>
         </div>
-        <button className="tb-btn icon-btn" type="button" onClick={onClearHighlights} disabled={dis || highlightsOnPage === 0} title="Clear Highlights on Current Page">
-          <Icon d="M3 6h18M8 6V4h8v2M6 6l1 15h10l1-15" />
-        </button>
 
-        <div className="tb-sep" />
+        {/* ── RIGHT ── highlight tools + settings ── */}
+        <div className="tb-right">
+          <div className="tb-group">
+            <button
+              className={`tb-btn icon-btn ${toolMode === 'highlight' ? 'active' : ''}`}
+              type="button"
+              onClick={() => setToolMode(toolMode === 'highlight' ? 'select' : 'highlight')}
+              disabled={dis} title="Highlight Tool (H)">
+              <Icon d="M4 20h4l11-11a2.8 2.8 0 0 0-4-4L4 16v4zM13.5 6.5l4 4" />
+              {toolMode === 'highlight' && (
+                <span className="tb-color-pip" style={{ background: highlightColor }} />
+              )}
+            </button>
+            <button
+              className="tb-btn icon-btn"
+              type="button"
+              onClick={onClearHighlights}
+              disabled={dis || highlightsOnPage === 0}
+              title="Clear Highlights on Page">
+              <Icon d="M3 6h18M8 6V4h8v2M6 6l1 15h10l1-15" />
+            </button>
+          </div>
 
-        <button className="tb-btn icon-btn" type="button" onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')} title="Toggle Theme">
-          {theme === 'dark'
-            ? <Icon d="M12 3v1m0 16v1m8.66-13l-.87.5M4.21 17.5l-.87.5M20.66 17.5l-.87-.5M4.21 6.5l-.87-.5M21 12h-1M4 12H3m15.36-5.64l-.7.7M6.34 17.66l-.7.7M17.66 17.66l.7.7M6.34 6.34l.7.7M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z" />
-            : <Icon d="M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79z" />
-          }
-        </button>
-        <button className="tb-btn icon-btn" type="button" onClick={() => window.print()} disabled={dis} title="Print (Ctrl+P)">
-          <Icon d="M6 9V2h12v7M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2M6 14h12v8H6z" />
-        </button>
-        <button className="tb-btn icon-btn" type="button" onClick={onDownload} disabled={dis} title="Download / Save Copy">
-          <Icon d="M12 3v12M7 10l5 5 5-5M5 21h14" />
-        </button>
-        <button className="tb-btn icon-btn" type="button" onClick={onOpenKeyVault} title="API Keys">
-          <Icon d="M21 2l-2 2M7.5 11.5a5 5 0 1 0 5 5 5 5 0 0 0-5-5zM12 12l8-8 2 2-8 8M16 6l2 2" />
-        </button>
+          <button
+            ref={settingsBtnRef}
+            className={`tb-btn icon-btn settings-btn ${settingsOpen ? 'active' : ''}`}
+            type="button"
+            onClick={toggleSettings}
+            title="Settings">
+            <Icon d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+          </button>
+        </div>
       </div>
-    </div>
+
+      {/* ── Settings Panel ── */}
+      <SettingsPanel
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        theme={theme} pdfDoc={pdfDoc}
+        zoom={zoom} setZoom={setZoom} fitMode={fitMode} setFitMode={setFitMode}
+        rotation={rotation} setRotation={setRotation}
+        setTheme={setTheme}
+        highlightColor={highlightColor} setHighlightColor={setHighlightColor}
+        fontId={fontId} setFontId={setFontId}
+        fontSize={fontSize} setFontSize={setFontSize}
+        onCreateDesktopShortcut={onCreateDesktopShortcut}
+        shortcutStatus={shortcutStatus}
+        onDownload={onDownload}
+        onOpenKeyVault={onOpenKeyVault}
+        aiMessages={aiMessages}
+        onExportChat={onExportChat}
+        onClearChat={onClearChat}
+        aiIsLoading={aiIsLoading}
+      />
+    </>
   )
 }

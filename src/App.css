@@ -102,6 +102,63 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; overflow: hidden; height:
 .tb-center { flex: 1; justify-content: center; }
 .tb-right { flex-shrink: 0; }
 
+/* ── Toolbar groups (pill containers) ─── */
+.tb-group {
+  display: flex;
+  align-items: center;
+  border-radius: 8px;
+  border: 1px solid;
+  overflow: hidden;
+  gap: 0;
+}
+.dark .tb-group  { border-color: rgba(255,255,255,0.07); background: rgba(255,255,255,0.025); }
+.light .tb-group { border-color: rgba(0,0,0,0.07); background: rgba(0,0,0,0.025); }
+
+.tb-group-divider {
+  width: 1px;
+  align-self: stretch;
+  flex-shrink: 0;
+  margin: 5px 0;
+}
+.dark .tb-group-divider  { background: rgba(255,255,255,0.08); }
+.light .tb-group-divider { background: rgba(0,0,0,0.08); }
+
+.tb-group-nav  { gap: 0; }
+.tb-group-search {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 8px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid;
+}
+.dark .tb-group-search  { border-color: rgba(255,255,255,0.07); background: rgba(255,255,255,0.025); color: var(--text-dim); }
+.light .tb-group-search { border-color: rgba(0,0,0,0.07); background: rgba(0,0,0,0.025); color: var(--lt-text-dim); }
+
+/* ── Highlight color pip on toolbar button ─ */
+.tb-color-pip {
+  position: absolute;
+  bottom: 5px;
+  right: 5px;
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.2);
+  pointer-events: none;
+}
+.icon-btn { position: relative; padding: 6px; }
+
+/* ── Settings gear button ──────────────────  */
+.settings-btn {
+  margin-left: 4px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  transition: background 0.14s ease, border-color 0.14s ease, color 0.14s ease;
+}
+.dark .settings-btn.active  { background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.12); color: var(--text); }
+.light .settings-btn.active { background: rgba(0,0,0,0.07); border-color: rgba(0,0,0,0.12); color: var(--lt-text); }
+
 .tb-btn {
   background: none; border: none; cursor: pointer;
   padding: 6px 8px; border-radius: 6px; font-size: 13px;
@@ -348,10 +405,14 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; overflow: hidden; height:
 }
 
 .pdf-canvas {
-  display: block; border-radius: 2px;
-  box-shadow: var(--page-shadow); max-width: 100%;
+  display: block;
+  border-radius: 2px;
+  box-shadow: var(--page-shadow);
+  max-width: 100%;
+  width: 100%;
+  height: auto !important;
   background: #fff;
-  transition: box-shadow 0.18s ease, transform 0.18s ease;
+  transition: box-shadow 0.22s ease, transform 0.22s ease;
 }
 .light .pdf-canvas { box-shadow: var(--lt-page-shadow); }
 

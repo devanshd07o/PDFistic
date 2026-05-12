@@ -46,7 +46,8 @@
 }
 .dark .ai-header          { border-bottom-color: var(--border); }
 
-.ai-header-top            { display: flex; align-items: center; gap: 8px; }
+.ai-header-row            { display: flex; align-items: center; gap: 8px; }
+.ai-header-info           { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; }
 
 .ai-icon-box {
   width: 22px; height: 22px;
@@ -57,35 +58,19 @@
   color: #534ab7;
 }
 .ai-title {
-  min-width: 0; flex: 1;
   font-size: 13px; font-weight: 650;
   white-space: nowrap;
 }
-.ai-model-badge {
+.ai-model-pill {
   max-width: 112px;
   overflow: hidden;
-  padding: 5px 8px;
+  padding: 3px 8px;
   border-radius: 999px;
   background: #eeedfe;
   color: #534ab7;
   font-size: 10px; font-weight: 800;
   line-height: 1;
   text-overflow: ellipsis; white-space: nowrap;
-}
-.ai-font-select {
-  height: 28px;
-  border: 0.5px solid var(--lt-border);
-  border-radius: 7px;
-  padding: 0 8px;
-  background: #fff;
-  color: var(--lt-text);
-  outline: 0;
-  font-size: 11px;
-}
-.dark .ai-font-select {
-  border-color: var(--border-strong);
-  background: rgba(255,255,255,0.05);
-  color: var(--text);
 }
 
 /* ── Chat area ────────────────────────────────────────────────────────────── */
@@ -397,63 +382,6 @@
 .ai-chat {
   font-size: var(--ai-font-size, 13px);
 }
-
-/* ── Font controls row (select + size slider) ─────────────────────────────── */
-.ai-font-controls {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;        /* small window mein header overflow nahi karega */
-  min-width: 0;
-}
-.ai-font-controls .ai-font-select {
-  flex: 1;
-  min-width: 0;
-}
-.ai-font-size-row {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 10px;
-  color: var(--lt-text-dim);
-  flex-shrink: 0;
-}
-.dark .ai-font-size-row   { color: var(--text-dim); }
-.ai-font-size-row input[type=range] {
-  width: 54px;
-  accent-color: #534ab7;
-  cursor: pointer;
-}
-
-/* ── Header action buttons (Export / Clear) ───────────────────────────────── */
-.ai-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-left: auto;
-  flex-shrink: 0;
-}
-.ai-header-action-btn {
-  border: 0;
-  background: transparent;
-  color: var(--lt-text-dim);
-  cursor: pointer;
-  font-size: 10px;
-  font-weight: 800;
-  padding: 3px 7px;
-  border-radius: 5px;
-  white-space: nowrap;
-}
-.ai-header-action-btn:hover {
-  background: rgba(83,74,183,0.1);
-  color: #534ab7;
-}
-.ai-header-action-btn.ai-clear-btn:hover {
-  background: rgba(220,38,38,0.1);
-  color: #dc2626;
-}
-.dark .ai-header-action-btn       { color: var(--text-dim); }
-.ai-header-action-btn:disabled    { opacity: 0.4; cursor: default; }
 
 /* ── Message action buttons (Copy / Regen) ────────────────────────────────── */
 .ai-msg-actions {
