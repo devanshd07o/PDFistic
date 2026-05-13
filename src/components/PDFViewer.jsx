@@ -321,8 +321,19 @@ export default function PDFViewer({
         {isDragging
           ? <div className="drop-hint"><div className="drop-icon">↓</div><p>Drop PDF here</p></div>
           : <div className="empty-state">
-              <img className="empty-logo" src="./icon.ico" alt="PDFistic" />
+
+              {/* ── Hero ── */}
+              <div className="empty-hero">
+                <div className="empty-logo-ring">
+                  <img className="empty-logo" src="./icon.ico" alt="PDFistic" />
+                </div>
+                <div className="empty-brand">
+                  <h1 className="empty-title">PDFistic</h1>
+                </div>
+              </div>
+
               <p className="empty-sub">Drop a PDF file or click Open</p>
+
               {recentFiles.length > 0 && (
                 <div className="recent-section">
                   <div className="recent-head">
@@ -330,7 +341,7 @@ export default function PDFViewer({
                     <small>Resume where you left off</small>
                   </div>
                   <div className="recent-grid">
-                    {recentFiles.map(file => (
+                    {recentFiles.slice(0, 8).map(file => (
                       <button
                         key={file.path}
                         className="recent-card"
@@ -350,12 +361,37 @@ export default function PDFViewer({
                   </div>
                 </div>
               )}
-              <div className="shortcut-grid">
-                <div className="sc-item"><kbd>Ctrl O</kbd><span>Open</span></div>
-                <div className="sc-item"><kbd>Ctrl scroll</kbd><span>Zoom</span></div>
-                <div className="sc-item"><kbd>← →</kbd><span>Navigate</span></div>
-                <div className="sc-item"><kbd>H</kbd><span>Highlight</span></div>
+
+              <div className="feature-strip">
+                <div className="feature-chip open-chip">
+                  <kbd>Ctrl O</kbd>
+                  <span>Open PDF</span>
+                </div>
+                <div className="feature-chip ai-chip">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                  <span>Ask AI about your PDF</span>
+                </div>
+                <div className="feature-chip ai-chip">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 20h4l11-11a2.8 2.8 0 0 0-4-4L4 16v4z"/><path d="M13.5 6.5l4 4"/></svg>
+                  <span>Highlight and annotate</span>
+                </div>
+                <div className="feature-chip ai-chip">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+                  <span>Full-text search</span>
+                </div>
               </div>
+
+              {/* ── Copyright ── */}
+              <div className="empty-credit">
+                <span className="empty-credit-divider" />
+                <span className="empty-credit-text">
+                  Crafted by <strong>Devansh Dubey</strong>
+                </span>
+                <span className="empty-credit-dot">·</span>
+                <span className="empty-credit-text">© 2026 PDFistic</span>
+                <span className="empty-credit-divider" />
+              </div>
+
             </div>
         }
       </div>
