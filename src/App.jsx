@@ -10,17 +10,21 @@ import KeyVault from './components/KeyVault'
 import { PROVIDERS } from './utils/aiCall'
 import { createWorker } from 'tesseract.js'
 import { PREMIUM_FONTS } from './components/SettingsPanel'
+import Onboarding from './components/Onboarding'
 import './App.css'
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl
+
+const stored = (k, fb) => { try { const v = localStorage.getItem(k); return v !== null ? JSON.parse(v) : fb } catch { return fb } }
+const persist = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)) } catch {} }
 
 export default function App() {
   const [pdfDoc, setPdfDoc] = useState(null)
   const [currentPage, setCurrentPage] = useState(1)
   const [totalPages, setTotalPages] = useState(0)
-  const [zoom, setZoom] = useState(1.2)
-  const [theme, setTheme] = useState('light')
-  const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [zoom, setZoom] = useState(() => stored('pf-zoom', 1.2))
+  const [theme, setTheme] = useState(() => stored('pf-theme', 'light'))
+  const [sidebarOpen, setSidebarOpen] = useState(() => stored('pf-sidebar', true))
   const [outline, setOutline] = useState([])
   const [generatedOutline, setGeneratedOutline] = useState([])
   const [fileName, setFileName] = useState('')
@@ -29,7 +33,7 @@ export default function App() {
   const [isDragging, setIsDragging] = useState(false)
   const [shortcutStatus, setShortcutStatus] = useState('')
   const [toolMode, setToolMode] = useState('select')
-  const [highlightColor, setHighlightColor] = useState('#facc15')
+  const [highlightColor, setHighlightColor] = useState(() => stored('pf-hcolor', '#facc15'))
   const [highlights, setHighlights] = useState([])
   const [rotation, setRotation] = useState(0)
   const [fitMode, setFitMode] = useState('width')
@@ -42,15 +46,16 @@ export default function App() {
   const [aiInput, setAiInput] = useState('')
   const [referCurrentPage, setReferCurrentPage] = useState(true)
   const [referPrevPage, setReferPrevPage] = useState(false)
-  const [selectedModel, setSelectedModel] = useState('')
+  const [selectedModel, setSelectedModel] = useState(() => stored('pf-model', ''))
   const [apiModels, setApiModels] = useState({})
   const [apiKeys, setApiKeys] = useState({})
   const [configuredModels, setConfiguredModels] = useState([])
   const [keyVaultOpen, setKeyVaultOpen] = useState(false)
   const [pageTexts, setPageTexts] = useState({})
   const [aiPanelWidth, setAiPanelWidth] = useState(320)
-  const [fontId, setFontId] = useState('system')
-  const [fontSize, setFontSize] = useState(13)
+  const [fontId, setFontId] = useState(() => stored('pf-fontid', 'system'))
+  const [fontSize, setFontSize] = useState(() => stored('pf-fontsize', 13))
+  const [showOnboarding, setShowOnboarding] = useState(() => !stored('pf-onboarded', false))
   const [ocrStatus, setOcrStatus] = useState('')
   const ocrWorkerRef = useRef(null)
   const chatFont = (PREMIUM_FONTS.find(f => f.id === fontId) || PREMIUM_FONTS[0]).value
@@ -59,7 +64,11 @@ export default function App() {
     setApiKeys(keys)
     const configured = PROVIDERS.filter(provider => keys?.[provider.id]?.trim())
     setConfiguredModels(configured)
-    setSelectedModel(model => configured.some(provider => provider.id === model) ? model : (configured[0]?.id || ''))
+    setSelectedModel(model => {
+      const saved = stored('pf-model', '')
+      const preferred = saved || model
+      return configured.some(p => p.id === preferred) ? preferred : (configured[0]?.id || '')
+    })
   }, [])
 
   const applyApiModels = useCallback((models = {}) => {
@@ -412,6 +421,14 @@ export default function App() {
     return () => window.removeEventListener('wheel', onWheel)
   }, [changeZoom])
 
+  // Persist UI preferences
+  useEffect(() => { persist('pf-theme', theme) }, [theme])
+  useEffect(() => { persist('pf-sidebar', sidebarOpen) }, [sidebarOpen])
+  useEffect(() => { persist('pf-hcolor', highlightColor) }, [highlightColor])
+  useEffect(() => { persist('pf-fontid', fontId) }, [fontId])
+  useEffect(() => { persist('pf-fontsize', fontSize) }, [fontSize])
+  useEffect(() => { if (selectedModel) persist('pf-model', selectedModel) }, [selectedModel])
+
   return (
     <div
       className={`app ${theme}`}
@@ -525,6 +542,13 @@ export default function App() {
           setKeyVaultOpen(false)
         }}
       />
+      {showOnboarding && (
+        <Onboarding
+          theme={theme}
+          onDone={() => { persist('pf-onboarded', true); setShowOnboarding(false) }}
+          onOpenKeyVault={() => { persist('pf-onboarded', true); setShowOnboarding(false); setKeyVaultOpen(true) }}
+        />
+      )}
     </div>
   )
 }

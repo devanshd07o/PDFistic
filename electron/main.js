@@ -52,11 +52,11 @@ async function getStore() {
           mistral: ''
         },
         apiModels: {
-          gemini: 'gemini-3.1-flash-lite',
-          groq: 'llama-3.3-70b-versatile',
-          openrouter: 'inclusionai/ring-2.6-1t:free',
-          cerebras: 'qwen-3-235b-a22b-instruct',
-          mistral: 'mistralai/mistral-small'
+          gemini: 'gemini-2.0-flash-lite',
+          groq: 'meta-llama/llama-4-scout-17b-16e-instruct',
+          openrouter: 'meta-llama/llama-3.1-8b-instruct:free',
+          cerebras: 'llama-3.3-70b',
+          mistral: 'mistral-small-latest'
         }
       }
     }))
@@ -135,11 +135,11 @@ function normalizeApiKeys(keys = {}) {
 
 function normalizeApiModels(models = {}) {
   return {
-    gemini: typeof models.gemini === 'string' && models.gemini ? models.gemini : 'gemini-3.1-flash-lite',
-    groq: typeof models.groq === 'string' && models.groq ? models.groq : 'llama-3.3-70b-versatile',
-    openrouter: typeof models.openrouter === 'string' && models.openrouter ? models.openrouter : 'inclusionai/ring-2.6-1t:free',
-    cerebras: typeof models.cerebras === 'string' && models.cerebras ? models.cerebras : 'qwen-3-235b-a22b-instruct',
-    mistral: typeof models.mistral === 'string' && models.mistral ? models.mistral : 'mistralai/mistral-small'
+    gemini: typeof models.gemini === 'string' && models.gemini ? models.gemini : 'gemini-2.0-flash-lite',
+    groq: typeof models.groq === 'string' && models.groq ? models.groq : 'meta-llama/llama-4-scout-17b-16e-instruct',
+    openrouter: typeof models.openrouter === 'string' && models.openrouter ? models.openrouter : 'meta-llama/llama-3.1-8b-instruct:free',
+    cerebras: typeof models.cerebras === 'string' && models.cerebras ? models.cerebras : 'llama-3.3-70b',
+    mistral: typeof models.mistral === 'string' && models.mistral ? models.mistral : 'mistral-small-latest'
   }
 }
 
@@ -176,6 +176,14 @@ function getPythonCandidates() {
   ].filter(Boolean)
 }
 
+function sanitizeLangCode(value, fallback) {
+  // Only allow safe BCP-47-like codes: letters, digits, hyphens
+  if (typeof value === 'string' && /^[a-zA-Z0-9-]{2,20}$/.test(value.trim())) {
+    return value.trim()
+  }
+  return fallback
+}
+
 function runSpeechPython(candidate, scriptPath, options) {
   const pauseMs = Math.min(Math.max(Number(options.pauseMs) || 2000, 500), 5000)
   return new Promise((resolve) => {
@@ -195,13 +203,13 @@ function runSpeechPython(candidate, scriptPath, options) {
       '--pause-ms',
       String(pauseMs),
       '--language',
-      options.language || 'en-IN',
+      sanitizeLangCode(options.language, 'en-IN'),
       '--fallback-language',
-      options.fallbackLanguage || 'hi-IN',
+      sanitizeLangCode(options.fallbackLanguage, 'hi-IN'),
       '--timeout-seconds',
-      String(options.timeoutSeconds || 8),
+      String(Math.min(Math.max(Number(options.timeoutSeconds) || 8, 1), 60)),
       '--phrase-time-limit',
-      String(options.phraseTimeLimit || 30)
+      String(Math.min(Math.max(Number(options.phraseTimeLimit) || 30, 1), 120))
     ]
     const child = spawn(candidate.command, args, { windowsHide: true })
 
@@ -353,6 +361,15 @@ app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow()
 })
 
+ipcMain.handle('open-external', (_, url) => {
+  if (typeof url !== 'string') return
+  // Only allow http/https — blocks javascript:, file:, data:, and other schemes
+  if (!/^https?:\/\//i.test(url.trim())) return
+  // Prevent excessively long URLs (a sign of injection attempts)
+  if (url.length > 2048) return
+  shell.openExternal(url)
+})
+
 ipcMain.handle('open-file-dialog', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: ['openFile'],
@@ -363,7 +380,15 @@ ipcMain.handle('open-file-dialog', async () => {
 
 ipcMain.handle('read-file', async (_, filePath) => {
   try {
-    const data = fs.readFileSync(filePath)
+    if (typeof filePath !== 'string' || !filePath.trim()) return null
+    // Resolve to absolute path and validate extension — prevents path traversal
+    // and stops the renderer from reading arbitrary system files
+    const resolved = path.resolve(filePath.trim())
+    if (!resolved.toLowerCase().endsWith('.pdf')) return null
+    // Guard against huge files that would crash the renderer
+    const stat = fs.statSync(resolved)
+    if (stat.size > 256 * 1024 * 1024) return null // 256 MB hard limit
+    const data = fs.readFileSync(resolved)
     return data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength)
   } catch { return null }
 })
@@ -404,8 +429,14 @@ ipcMain.handle('stop-speech-recognition', () => stopSpeechRecognition())
 
 ipcMain.handle('save-pdf', async (_, bytes, suggestedName) => {
   try {
+    // Validate bytes — must be a transferable buffer
+    if (!bytes) return { ok: false, error: 'No data provided' }
+    // Sanitize filename: strip path separators and control chars
+    const safeName = (typeof suggestedName === 'string' ? suggestedName : 'document.pdf')
+      .replace(/[/\\:*?"<>|\x00-\x1f]/g, '_')
+      .slice(0, 200) || 'document.pdf'
     const result = await dialog.showSaveDialog(mainWindow, {
-      defaultPath: suggestedName || 'document.pdf',
+      defaultPath: safeName,
       filters: [{ name: 'PDF Files', extensions: ['pdf'] }]
     })
     if (result.canceled || !result.filePath) return { ok: false, canceled: true }

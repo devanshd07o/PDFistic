@@ -16,7 +16,7 @@ export const PROVIDERS = [
     model: 'llama-3.3-70b-versatile',
     color: '#f97316',
     models: [
-      { id: 'meta-llama/llama-4-scout-17b-instruct', name: 'Llama 4 Scout', note: 'Next-Gen Choice' },
+      { id: 'meta-llama/llama-4-scout-17b-16e-instruct', name: 'Llama 4 Scout', note: 'Next-Gen Choice' },
       { id: 'openai/gpt-oss-120b', name: 'GPT OSS 120B', note: 'The Powerhouse' },
       { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B', note: 'Stable & Reliable' }
     ]
@@ -36,11 +36,11 @@ export const PROVIDERS = [
   {
     id: 'cerebras',
     name: 'Cerebras',
-    model: 'qwen-3-235b-a22b-instruct',
+    model: 'llama-3.3-70b',
     color: '#dc2626',
     models: [
-      { id: 'qwen-3-235b-a22b-instruct', name: 'Qwen 3 235B', note: 'The Giant' },
-      { id: 'gpt-oss-120b', name: 'GPT OSS 120B', note: 'Open Source King' },
+      { id: 'llama-3.3-70b', name: 'Llama 3.3 70B', note: 'The Giant' },
+      { id: 'llama3.1-70b', name: 'Llama 3.1 70B', note: 'Open Source King' },
       { id: 'llama3.1-8b', name: 'Llama 3.1 8B', note: 'The Speedster' }
     ]
   },

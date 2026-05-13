@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('app-command', handler)
     return () => ipcRenderer.removeListener('app-command', handler)
   },
+  openExternal: (url) => ipcRenderer.invoke('open-external', url),
   minimize: () => ipcRenderer.send('win-minimize'),
   maximize: () => ipcRenderer.send('win-maximize'),
   close: () => ipcRenderer.send('win-close')
