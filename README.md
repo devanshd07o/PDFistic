@@ -114,7 +114,7 @@ npm run build
 Generated installer:
 
 ```bash
-dist-electron/PDFistic.Setup.1.0.11.exe
+dist-electron/PDFistic.Setup.1.0.12.exe
 ```
 
 ---
