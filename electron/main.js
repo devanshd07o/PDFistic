@@ -9,8 +9,18 @@ let pendingFilePath = getPdfPathFromArgv(process.argv)
 let storePromise
 let speechProcess = null
 
-app.setName('PDFistic')
-app.setAppUserModelId('com.pdfistic.app')
+if (isDev) {
+  try {
+    const devSessionDataPath = path.join(app.getPath('temp'), 'pdfistic-dev-session')
+    fs.mkdirSync(devSessionDataPath, { recursive: true })
+    app.setPath('sessionData', devSessionDataPath)
+  } catch {
+    // Fall back to Electron defaults if the temp path is unavailable.
+  }
+}
+
+app.setName(isDev ? 'PDFistic Dev' : 'PDFistic')
+app.setAppUserModelId(isDev ? 'com.pdfistic.app.dev' : 'com.pdfistic.app')
 
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
@@ -91,7 +101,7 @@ async function getRecentFiles() {
       pageCount: Math.max(0, Number(item.pageCount) || 0)
     }))
     .sort((a, b) => b.lastOpened - a.lastOpened)
-    .slice(0, 10)
+    .slice(0, 30)
   if (pruned.length !== recentFiles.length) store.set('recentFiles', pruned)
   return pruned
 }
@@ -103,14 +113,23 @@ async function upsertRecentFile(input = {}) {
   const store = await getStore()
   const recentFiles = await getRecentFiles()
   const existing = recentFiles.find(item => item.path === nextFile.path)
+
+  // Only carry over the OLD lastOpened when this is a pure progress save
+  // (caller deliberately omits lastOpened so we don't bump the file to top).
+  // When lastOpened IS supplied (new open / drag-drop) always use it.
   const merged = {
     ...existing,
     ...nextFile,
-    lastOpened: input.lastOpened ? nextFile.lastOpened : (existing?.lastOpened || nextFile.lastOpened)
+    lastOpened: input.lastOpened
+      ? nextFile.lastOpened                          // explicit open → use supplied timestamp
+      : (existing?.lastOpened || nextFile.lastOpened) // progress save → keep old timestamp
   }
+
+  // Remove duplicate, prepend merged, sort by lastOpened descending, cap at 30
   const next = [merged, ...recentFiles.filter(item => item.path !== nextFile.path)]
     .sort((a, b) => b.lastOpened - a.lastOpened)
-    .slice(0, 10)
+    .slice(0, 30)
+
   store.set('recentFiles', next)
   return next
 }
@@ -370,12 +389,18 @@ ipcMain.handle('open-external', (_, url) => {
   shell.openExternal(url)
 })
 
-ipcMain.handle('open-file-dialog', async () => {
+ipcMain.handle('open-file-dialog', async (_, options = {}) => {
+  const multiple = Boolean(options?.multiple)
+  const properties = ['openFile']
+  if (multiple) properties.push('multiSelections')
   const result = await dialog.showOpenDialog(mainWindow, {
-    properties: ['openFile'],
+    properties,
     filters: [{ name: 'PDF Files', extensions: ['pdf'] }]
   })
-  return result.canceled ? null : result.filePaths[0]
+  if (result.canceled || !result.filePaths.length) return null
+  // Return array for multi-select, single string for single-select
+  // (keeps backwards compatibility with any callers that expect a string)
+  return multiple ? result.filePaths : result.filePaths[0]
 })
 
 ipcMain.handle('read-file', async (_, filePath) => {

@@ -19,11 +19,19 @@ const HIGHLIGHT_COLORS = [
   { value: '#fb7185', label: 'Rose' },
   { value: '#38bdf8', label: 'Sky' },
   { value: '#4ade80', label: 'Emerald' },
-  { value: '#e879f9', label: 'Fuchsia' },
+  { value: '#4f46e5', label: 'Indigo' },
   { value: '#fb923c', label: 'Orange' },
 ]
 
-const ZOOMS = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0, 4.0]
+const PEN_COLORS = [
+  { value: 'rainbow', label: 'Rainbow 🌈' },
+  { value: '#ef4444', label: 'Red' },
+  { value: '#f59e0b', label: 'Gold' },
+  { value: '#10b981', label: 'Teal' },
+  { value: '#3b82f6', label: 'Blue' },
+  { value: '#8b5cf6', label: 'Purple' },
+  { value: '#0f766e', label: 'Deep Teal' },
+]
 
 // ── Tiny icon ──────────────────────────────────────────────────────────────────
 const SI = ({ d, size = 14 }) => (
@@ -60,19 +68,18 @@ function Row({ icon, label, children }) {
 export default function SettingsPanel({
   open, onClose, theme, pdfDoc,
   zoom, setZoom, fitMode, setFitMode, rotation, setRotation,
+  penColor, setPenColor,
   setTheme,
   highlightColor, setHighlightColor,
   fontId, setFontId, fontSize, setFontSize,
-  onCreateDesktopShortcut, shortcutStatus,
+  setToolMode,
+  penSize, setPenSize,
   onDownload, onOpenKeyVault,
   aiMessages, onExportChat, onClearChat, aiIsLoading,
 }) {
   const panelRef = useRef(null)
   const dis = !pdfDoc
   const hasElectron = Boolean(window.electronAPI)
-
-  const zoomOptions = ZOOMS.some(l => Math.abs(l - zoom) < 0.001)
-    ? ZOOMS : [...ZOOMS, zoom].sort((a, b) => a - b)
 
   // ── Close on Escape + click-outside ─────────────────────────────────────────
   useEffect(() => {
@@ -104,10 +111,7 @@ export default function SettingsPanel({
             onClick={() => { setFitMode('custom'); setZoom(z => Math.max(0.5, +(z - 0.25).toFixed(2))) }}>
             −
           </button>
-          <select className="sp-select sp-zoom-sel" value={zoom} disabled={dis}
-            onChange={e => { setFitMode('custom'); setZoom(parseFloat(e.target.value)) }}>
-            {zoomOptions.map(l => <option key={l} value={l}>{Math.round(l * 100)}%</option>)}
-          </select>
+          <span className="sp-zoom-value">{Math.round(zoom * 100)}%</span>
           <button className="sp-icon-btn" disabled={dis}
             onClick={() => { setFitMode('custom'); setZoom(z => Math.min(4, +(z + 0.25).toFixed(2))) }}>
             +
@@ -161,6 +165,26 @@ export default function SettingsPanel({
             ))}
           </div>
         </Row>
+        <Row icon="M12 4.5V3a3 3 0 0 0-3-3 3 3 0 0 0-3 3v1.5M4 10.5v5a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5M8 10.5V6a4 4 0 0 1 8 0v4.5" label="Pen Colors">
+          <div className="sp-swatches">
+            {PEN_COLORS.map(({ value, label }) => (
+              <button
+                key={value}
+                className={`sp-swatch ${value === 'rainbow' ? 'sp-swatch-rainbow' : ''} ${penColor === value ? 'active' : ''}`}
+                style={value === 'rainbow' ? {} : { '--c': value }}
+                onClick={() => setPenColor(value)}
+                disabled={dis}
+                title={label}
+              />
+            ))}
+          </div>
+        </Row>
+        <Row icon="M3 11h4l2 8 4-16 2 8h4" label={`Pen Size · ${penSize}px`}>
+          <input type="range" min={0.4} max={4} step={0.1} value={penSize}
+            className="sp-range"
+            disabled={dis}
+            onChange={e => setPenSize(Number(e.target.value))} />
+        </Row>
       </Section>
 
       <div className="sp-divider" />
@@ -189,12 +213,6 @@ export default function SettingsPanel({
       {/* ── TOOLS ────────────────────────────────────── */}
       <Section title="Tools">
         <div className="sp-grid">
-          {hasElectron && (
-            <button className="sp-tile" onClick={onCreateDesktopShortcut}>
-              <SI d="M4 5h16v11H4zM9 20h6M12 16v4" size={15} />
-              <span>Desktop Shortcut</span>
-            </button>
-          )}
           <button className="sp-tile" disabled={dis} onClick={() => window.print()}>
             <SI d="M6 9V2h12v7M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2M6 14h12v8H6z" size={15} />
             <span>Print</span>
@@ -203,12 +221,7 @@ export default function SettingsPanel({
             <SI d="M12 3v12M7 10l5 5 5-5M5 21h14" size={15} />
             <span>Download PDF</span>
           </button>
-          <button className="sp-tile" onClick={onOpenKeyVault}>
-            <SI d="M21 2l-2 2M7.5 11.5a5 5 0 1 0 5 5 5 5 0 0 0-5-5zM12 12l8-8 2 2-8 8M16 6l2 2" size={15} />
-            <span>API Keys</span>
-          </button>
         </div>
-        {shortcutStatus && <p className="sp-status">{shortcutStatus}</p>}
       </Section>
 
       {/* ── AI CHAT ACTIONS ──────────────────────────── */}

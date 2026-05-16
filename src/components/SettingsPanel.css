@@ -134,7 +134,7 @@
   border-color: rgba(0, 0, 0, 0.1);
   color: var(--lt-text);
 }
-.light .sp-select:focus { border-color: rgba(85, 72, 217, 0.5); }
+.light .sp-select:focus { border-color: rgba(37,99,235,0.5); }
 
 .sp-zoom-sel  { flex: 0 0 68px; }
 .sp-font-sel  { font-size: 11px; }
@@ -181,10 +181,10 @@
 }
 .dark .sp-pill  { border-color: rgba(255, 255, 255, 0.1); color: var(--text-dim); }
 .dark .sp-pill:hover:not(:disabled)  { background: rgba(255, 255, 255, 0.07); color: var(--text); }
-.dark .sp-pill.active  { background: rgba(124, 111, 255, 0.18); border-color: rgba(124, 111, 255, 0.4); color: #a09df5; }
+.dark .sp-pill.active  { background: rgba(59,130,246,0.15); border-color: rgba(59,130,246,0.4); color: #60a5fa; }
 .light .sp-pill { border-color: rgba(0, 0, 0, 0.1); color: var(--lt-text-dim); }
 .light .sp-pill:hover:not(:disabled) { background: rgba(0, 0, 0, 0.05); color: var(--lt-text); }
-.light .sp-pill.active { background: rgba(85, 72, 217, 0.1); border-color: rgba(85, 72, 217, 0.3); color: #5548d9; }
+.light .sp-pill.active { background: rgba(37,99,235,0.08); border-color: rgba(37,99,235,0.3); color: #2563eb; }
 .sp-pill:disabled { opacity: 0.3; cursor: default; }
 .sp-pill-icon { padding: 0 10px 0 8px; }
 
@@ -220,8 +220,9 @@
 /* ── Highlight swatches ───────────────────────────────────────────────────── */
 .sp-swatches {
   display: flex;
-  gap: 6px;
+  gap: 4px;
   align-items: center;
+  flex-wrap: wrap;
 }
 .sp-swatch {
   width: 19px;
@@ -242,6 +243,20 @@
 .light .sp-swatch.active { border-color: #1a1a20; }
 .sp-swatch:disabled { opacity: 0.35; cursor: default; }
 
+/* ── Rainbow swatch ───────────────────────────────────────────────────────── */
+.sp-swatch-rainbow {
+  background: conic-gradient(
+    hsl(0,100%,55%), hsl(45,100%,55%), hsl(90,100%,55%),
+    hsl(135,100%,55%), hsl(180,100%,55%), hsl(225,100%,55%),
+    hsl(270,100%,55%), hsl(315,100%,55%), hsl(360,100%,55%)
+  );
+  box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.2);
+}
+.sp-swatch-rainbow.active {
+  border-color: #fff;
+  box-shadow: 0 0 0 1.5px rgba(0,0,0,0.25), 0 0 0 3.5px rgba(180, 100, 255, 0.55);
+}
+
 /* ── Font size slider ─────────────────────────────────────────────────────── */
 .sp-size-track {
   display: flex;
@@ -260,7 +275,7 @@
 .sp-sz-a.lg { font-size: 16px; }
 .sp-range {
   flex: 1;
-  accent-color: #7c6fff;
+  accent-color: #3b82f6;
   cursor: pointer;
 }
 

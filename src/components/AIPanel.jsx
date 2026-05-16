@@ -1,17 +1,112 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
-import { buildMessages, streamAI, getProvider } from '../utils/aiCall'
+import { buildMessages, streamAI, getProvider, PROVIDERS } from '../utils/aiCall'
+import hljs from 'highlight.js'
+import ReactECharts from 'echarts-for-react'
+import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet'
+import 'leaflet/dist/leaflet.css'
+import ReactDiffViewer from 'react-diff-viewer-continued'
 import './AIPanel.css'
 
+// ── Pyodide loader (lazy, singleton) ──────────────────────────────────────────
+let _pyodidePromise = null
+function loadPyodide() {
+  if (typeof window === 'undefined') return Promise.resolve(null)
+  if (window.pyodide) return Promise.resolve(window.pyodide)
+  if (_pyodidePromise) return _pyodidePromise
+  _pyodidePromise = new Promise((resolve) => {
+    const script = document.createElement('script')
+    script.src = 'https://cdn.jsdelivr.net/pyodide/v0.25.0/full/pyodide.js'
+    script.onload = () => {
+      window.loadPyodide().then(py => {
+        window.pyodide = py
+        resolve(py)
+      }).catch(() => resolve(null))
+    }
+    script.onerror = () => resolve(null)
+    document.head.appendChild(script)
+  })
+  return _pyodidePromise
+}
+
+// ── KaTeX loader (lazy, singleton) ────────────────────────────────────────────
+let _katexPromise = null
+function loadKatex() {
+  if (typeof window === 'undefined') return Promise.resolve(null)
+  if (window.katex && window.katex.mhchem) return Promise.resolve(window.katex)
+  if (_katexPromise) return _katexPromise
+  _katexPromise = new Promise((resolve) => {
+    const loadScript = (src) => new Promise((res, rej) => {
+      const script = document.createElement('script')
+      script.src = src
+      script.crossOrigin = 'anonymous'
+      script.onload = res
+      script.onerror = rej
+      document.head.appendChild(script)
+    })
+    loadScript('https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js')
+      .then(() => loadScript('https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/mhchem.min.js'))
+      .then(() => {
+        window.katex.mhchem = true
+        resolve(window.katex)
+      })
+      .catch(() => { _katexPromise = null; resolve(null) })
+  })
+  return _katexPromise
+}
+
+// ── Inline math component ($...$) ─────────────────────────────────────────────
+function MathInline({ tex }) {
+  const [html, setHtml]     = useState(null)
+  const [failed, setFailed] = useState(false)
+  useEffect(() => {
+    loadKatex().then(katex => {
+      if (!katex) { setFailed(true); return }
+      try {
+        setHtml(katex.renderToString(tex, {
+          throwOnError: false,
+          displayMode: false,
+          output: 'html',
+          strict: 'ignore',
+        }))
+      } catch { setFailed(true) }
+    })
+  }, [tex])
+  if (failed) return <code className="ai-math-error">{tex}</code>
+  if (!html)  return <code className="ai-inline-code">{tex}</code>
+  return <span className="ai-math-inline" dangerouslySetInnerHTML={{ __html: html }} />
+}
+
+// ── Display math component ($$...$$) ──────────────────────────────────────────
+function MathDisplay({ tex }) {
+  const [html, setHtml]     = useState(null)
+  const [failed, setFailed] = useState(false)
+  useEffect(() => {
+    loadKatex().then(katex => {
+      if (!katex) { setFailed(true); return }
+      try {
+        setHtml(katex.renderToString(tex, {
+          throwOnError: false,
+          displayMode: true,
+          output: 'html',
+          strict: 'ignore',
+        }))
+      } catch { setFailed(true) }
+    })
+  }, [tex])
+  if (failed) return <pre className="ai-code-block" style={{ margin: '8px 0' }}><code>{tex}</code></pre>
+  if (!html)  return null
+  return <div className="ai-math-display" dangerouslySetInnerHTML={{ __html: html }} />
+}
+
 // ── Constants ─────────────────────────────────────────────────────────────────
-const STORAGE_KEY = 'pdfistic-chat'
 const MIC_PAUSE_MS = 2000
 
 const PROMPT_TEMPLATES = [
-  { label: '📝 Summarize', text: 'Summarize this page in bullet points.' },
-  { label: '❓ Quiz me',   text: 'Generate 3 quiz questions from this page.' },
-  { label: '📖 Explain',   text: 'Explain the key concepts on this page simply.' },
-  { label: '🔑 Key terms', text: 'List the key terms and their definitions from this page.' },
+  { label: 'Summarize',  emoji: '📝', text: 'Summarize this page in bullet points.',              desc: 'Key points, fast' },
+  { label: 'Quiz me',    emoji: '❓', text: 'Generate 3 quiz questions from this page.',           desc: 'Test yourself' },
+  { label: 'Explain',    emoji: '📖', text: 'Explain the key concepts on this page simply.',       desc: 'Plain language' },
+  { label: 'Key terms',  emoji: '🔑', text: 'List the key terms and their definitions from this page.', desc: 'Glossary view' },
 ]
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
@@ -115,25 +210,296 @@ const LANG_COLORS = {
   md: '#083fa1', markdown: '#083fa1',
 }
 
+let mermaidInitialized = false
+
+function normalizeMermaidCode(code) {
+  return code
+    .replace(/[–—−―]/g, '-')
+    .replace(/→|⇒|⟶|⟹/g, '-->')
+    .replace(/←|⇐|⟵|⟸/g, '<--')
+    .replace(/↔|⇔|⟷|⟺/g, '<-->')
+    .replace(/\|\s+([^|]+?)\s+\|/g, '|$1|')
+}
+
+function MermaidBlock({ code }) {
+  const [svg, setSvg] = useState(null)
+  const sanitizedCode = normalizeMermaidCode(code)
+  const id = useRef(`mermaid-${Math.random().toString(36).substr(2, 9)}`)
+
+  useEffect(() => {
+    let mounted = true
+    const renderChart = async () => {
+      try {
+        const { default: mermaid } = await import('mermaid')
+        if (!mermaidInitialized) {
+          mermaid.initialize({ startOnLoad: false, theme: 'default' })
+          mermaidInitialized = true
+        }
+        const { svg: renderedSvg } = await mermaid.render(id.current, sanitizedCode)
+        if (mounted) setSvg(renderedSvg)
+      } catch (err) {
+        if (mounted) setSvg(`<pre class="ai-math-error" style="color:red;padding:10px">${err.message}</pre>`)
+      }
+    }
+    renderChart()
+    return () => { mounted = false }
+  }, [sanitizedCode])
+
+  if (!svg) return <div className="ai-mermaid-loading">Rendering diagram…</div>
+  return <div className="ai-mermaid-wrap" dangerouslySetInnerHTML={{ __html: svg }} />
+}
+
+// ── Advanced Blocks ─────────────────────────────────────────────────────────────
+function ChartBlock({ code }) {
+  const [options, setOptions] = useState(null)
+  useEffect(() => {
+    try { setOptions(JSON.parse(code)) } catch { setOptions(null) }
+  }, [code])
+  if (!options) return <div className="ai-math-error">Invalid chart JSON</div>
+  return <ReactECharts option={options} style={{ height: 350, marginTop: 10, marginBottom: 10 }} />
+}
+
+function MapBlock({ code }) {
+  const [data, setData] = useState(null)
+  useEffect(() => {
+    try { setData(JSON.parse(code)) } catch { setData(null) }
+  }, [code])
+  if (!data) return <div className="ai-math-error">Invalid map JSON</div>
+  const position = [data.lat || 0, data.lng || 0]
+  return (
+    <div style={{ height: 300, width: '100%', marginTop: 10, marginBottom: 10, borderRadius: 8, overflow: 'hidden', zIndex: 1 }}>
+      <MapContainer center={position} zoom={data.zoom || 13} scrollWheelZoom={false} style={{ height: '100%', width: '100%' }}>
+        <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution='&copy; OSM' />
+        {data.marker && <Marker position={position}><Popup>{data.marker}</Popup></Marker>}
+      </MapContainer>
+    </div>
+  )
+}
+
+function SandboxBlock({ lang, code }) {
+  const [output, setOutput] = useState('')
+  const [running, setRunning] = useState(false)
+  
+  const runCode = async () => {
+    setRunning(true); setOutput('Running...')
+    if (lang.includes('py')) {
+      const pyodide = await loadPyodide()
+      if (!pyodide) { setOutput('Failed to load Pyodide'); setRunning(false); return }
+      try {
+        let stdout = ''
+        pyodide.setStdout({ batched: (str) => stdout += str + '\n' })
+        await pyodide.runPythonAsync(code)
+        setOutput(stdout || 'Success (no output)')
+      } catch (e) { setOutput(e.toString()) }
+    } else if (lang.includes('js') || lang.includes('javascript')) {
+      let stdout = ''
+      const ogLog = console.log
+      console.log = (...args) => stdout += args.map(a=>typeof a==='object'?JSON.stringify(a):a).join(' ') + '\n'
+      try {
+        // eslint-disable-next-line no-new-func
+        const fn = new Function(code)
+        fn()
+        setOutput(stdout || 'Success (no output)')
+      } catch (e) { setOutput(stdout + '\nError: ' + e.toString()) }
+      finally { console.log = ogLog }
+    } else { setOutput('Sandboxing not supported for this language.') }
+    setRunning(false)
+  }
+
+  return (
+    <div className="ai-sandbox">
+      <CodeBlock lang={lang} code={code} />
+      <div className="ai-sandbox-actions">
+        <button onClick={runCode} disabled={running} className="ai-sandbox-run">
+          {running ? 'Running...' : '▶ Run Code'}
+        </button>
+      </div>
+      {output && <pre className="ai-sandbox-output">{output}</pre>}
+    </div>
+  )
+}
+
+function RichDiffBlock({ code }) {
+  const oldCode = code.split('\n').filter(l => !l.startsWith('+') || l.startsWith('+++')).map(l => l.replace(/^-/, '')).join('\n')
+  const newCode = code.split('\n').filter(l => !l.startsWith('-') || l.startsWith('---')).map(l => l.replace(/^\+/, '')).join('\n')
+  return (
+    <div className="ai-diff-viewer">
+      <ReactDiffViewer oldValue={oldCode} newValue={newCode} splitView={false} useDarkTheme={true} hideLineNumbers={false} />
+    </div>
+  )
+}
+
+function TimelineBlock({ code, onPageJump }) {
+  const lines = code.split('\n').filter(l => l.trim())
+  return (
+    <div className="ai-timeline">
+      {lines.map((line, i) => {
+        const [title, ...desc] = line.split(':')
+        return (
+          <div key={i} className="ai-timeline-node">
+            <div className="ai-timeline-title">{parseInline(title.trim(), onPageJump)}</div>
+            <div className="ai-timeline-desc">{parseInline(desc.join(':').trim(), onPageJump)}</div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function KanbanBlock({ code, onPageJump }) {
+  const lines = code.split('\n')
+  const columns = []
+  let currentCol = null
+  for (const line of lines) {
+    if (line.match(/^#{1,6}\s+(.*)/)) {
+      currentCol = { title: line.replace(/^#{1,6}\s+/, ''), tasks: [] }
+      columns.push(currentCol)
+    } else if (line.match(/^[-*]\s+(.*)/) && currentCol) {
+      currentCol.tasks.push(line.replace(/^[-*]\s+/, ''))
+    }
+  }
+  return (
+    <div className="ai-kanban-board">
+      {columns.map((col, i) => (
+        <div key={i} className="ai-kanban-col">
+          <div className="ai-kanban-title">{parseInline(col.title, onPageJump)}</div>
+          <div className="ai-kanban-tasks">
+            {col.tasks.map((task, j) => (
+              <div key={j} className="ai-kanban-card">{parseInline(task, onPageJump)}</div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function AdvancedTable({ children, headers, rows, aligns = [], caption, onPageJump }) {
+  const [sortCol, setSortCol] = useState(null)
+  const [sortAsc, setSortAsc] = useState(true)
+
+  const handleSort = (idx) => {
+    if (sortCol === idx) setSortAsc(!sortAsc)
+    else { setSortCol(idx); setSortAsc(true) }
+  }
+
+  let sortedRows = [...rows]
+  if (sortCol !== null) {
+    sortedRows.sort((a, b) => {
+      const aVal = a[sortCol]?.text || ''
+      const bVal = b[sortCol]?.text || ''
+      const numA = parseFloat(aVal)
+      const numB = parseFloat(bVal)
+      if (!isNaN(numA) && !isNaN(numB)) return sortAsc ? numA - numB : numB - numA
+      return sortAsc ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal)
+    })
+  }
+
+  const exportCsv = () => {
+    const csvContent = [
+      headers.map(h => `"${h.text.replace(/"/g, '""')}"`).join(','),
+      ...sortedRows.map(row => row.map(cell => `"${cell.text.replace(/"/g, '""')}"`).join(','))
+    ].join('\n')
+    const blob = new Blob([csvContent], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob); const a = document.createElement('a')
+    a.href = url; a.download = 'table.csv'; a.click(); URL.revokeObjectURL(url)
+  }
+
+  return (
+    <div className="ai-table-wrap">
+      <div className="ai-table-actions"><button className="ai-table-export" onClick={exportCsv}>⬇ CSV</button></div>
+      <table className="ai-table">
+        {caption && <caption className="ai-table-caption">{caption}</caption>}
+        <thead>
+          <tr>
+            {headers.map((h, i) => (
+              <th key={i} style={{ textAlign: aligns[i] || 'left', cursor: 'pointer' }} onClick={() => handleSort(i)}>
+                {parseInline(h.text, onPageJump)} {sortCol === i ? (sortAsc ? '▲' : '▼') : '↕'}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {sortedRows.map((r, i) => (
+            <tr key={i}>
+              {r.map((c, j) => (
+                <td key={j} style={{ textAlign: aligns[j] || 'left' }}>
+                  {parseInline(c.text, onPageJump)}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+
 // ── Code block ────────────────────────────────────────────────────────────────
 function CodeBlock({ lang, code }) {
   const [copied, setCopied] = useState(false)
-  const normalLang = lang?.toLowerCase().trim() || ''
-  const langColor  = LANG_COLORS[normalLang] || 'rgba(160,157,245,0.65)'
+  let normalLang = lang?.toLowerCase().trim() || ''
+  let filename = ''
+  let highlightRanges = []
+
+  const braceMatch = normalLang.match(/\{([^}]+)\}/)
+  if (braceMatch) {
+    normalLang = normalLang.replace(braceMatch[0], '').trim()
+    highlightRanges = braceMatch[1].split(',').map(part => {
+      if (part.includes('-')) {
+        const [start, end] = part.split('-')
+        return { start: parseInt(start), end: parseInt(end) }
+      }
+      return { start: parseInt(part), end: parseInt(part) }
+    })
+  }
+
+  const colonMatch = normalLang.match(/^([^:]+):(.+)$/)
+  if (colonMatch) {
+    normalLang = colonMatch[1]
+    filename = colonMatch[2]
+  }
+
+  const langColor = LANG_COLORS[normalLang] || 'rgba(160,157,245,0.65)'
   const lines = code.split('\n')
   const displayLines = lines[lines.length - 1].trim() === '' ? lines.slice(0, -1) : lines
+
   const copy = () => {
     copyToClipboard(code).then(() => {
       setCopied(true); setTimeout(() => setCopied(false), 1800)
     }).catch(() => {})
   }
+
+  const isHighlighted = (idx) => {
+    const num = idx + 1
+    return highlightRanges.some(r => num >= r.start && num <= r.end)
+  }
+
+  const renderCodeLines = () => {
+    return displayLines.map((line, i) => {
+      const hlClass = isHighlighted(i) ? ' ai-line-hl' : ''
+      let renderedLine = line
+      let diffClass = ''
+      if (normalLang === 'diff') {
+        if (line.startsWith('+')) diffClass = ' ai-line-diff-add'
+        else if (line.startsWith('-')) diffClass = ' ai-line-diff-remove'
+      } else if (normalLang && hljs.getLanguage(normalLang)) {
+        try { renderedLine = hljs.highlight(line, { language: normalLang }).value } catch {}
+      }
+      return (
+        <div key={i} className={`ai-code-line${hlClass}${diffClass}`} dangerouslySetInnerHTML={{ __html: renderedLine || ' ' }} />
+      )
+    })
+  }
+
   return (
-    <div className="ai-code-wrap">
+    <div className={`ai-code-wrap ${normalLang === 'terminal' || normalLang === 'sh' || normalLang === 'bash' ? 'ai-terminal' : ''}`}>
       <div className="ai-code-header">
         <span className="ai-code-dots" aria-hidden="true">
           <span className="ai-code-dot red" /><span className="ai-code-dot yellow" /><span className="ai-code-dot green" />
         </span>
-        <span className="ai-code-lang-label" style={{ color: langColor }}>{normalLang || 'code'}</span>
+        <span className="ai-code-lang-label" style={{ color: langColor }}>{filename || normalLang || 'code'}</span>
         <button className={`ai-code-copy-btn${copied ? ' copied' : ''}`} type="button" onClick={copy}
           aria-label={copied ? 'Copied' : 'Copy code'}>
           {copied ? '✓ Copied' : 'Copy'}
@@ -141,23 +507,38 @@ function CodeBlock({ lang, code }) {
       </div>
       <div className="ai-code-body">
         <div className="ai-code-gutter" aria-hidden="true">
-          {displayLines.map((_, i) => <div key={i}>{i + 1}</div>)}
+          {displayLines.map((_, i) => <div key={i} className={isHighlighted(i) ? 'ai-line-hl-gutter' : ''}>{i + 1}</div>)}
         </div>
-        <pre className="ai-code-block"><code>{displayLines.join('\n')}</code></pre>
+        <pre className="ai-code-block"><code>{renderCodeLines()}</code></pre>
       </div>
+    </div>
+  )
+}
+
+// ── File Tree ─────────────────────────────────────────────────────────────────
+function FileTree({ code }) {
+  const lines = code.split('\n').filter(l => l.trim())
+  return (
+    <div className="ai-filetree">
+      {lines.map((l, i) => <div key={i} className="ai-filetree-line">{l}</div>)}
     </div>
   )
 }
 
 // ── Callout ───────────────────────────────────────────────────────────────────
 const CALLOUT_META = {
-  note:      { icon: 'ℹ', label: 'Note' },
+  note:      { icon: 'ℹ️', label: 'Note' },
+  info:      { icon: 'ℹ️', label: 'Info' },
   tip:       { icon: '💡', label: 'Tip' },
-  warning:   { icon: '⚠', label: 'Warning' },
+  success:   { icon: '✅', label: 'Success' },
+  warning:   { icon: '⚠️', label: 'Warning' },
+  danger:    { icon: '🚨', label: 'Danger' },
   caution:   { icon: '🔥', label: 'Caution' },
   important: { icon: '❗', label: 'Important' },
+  question:  { icon: '❓', label: 'Question' },
+  bug:       { icon: '🐛', label: 'Bug' },
 }
-function Callout({ type, lines }) {
+function Callout({ type, lines, onPageJump }) {
   const meta = CALLOUT_META[type] || CALLOUT_META.note
   return (
     <div className={`ai-callout ai-callout-${type}`}>
@@ -167,7 +548,7 @@ function Callout({ type, lines }) {
       </div>
       <div className="ai-callout-body">
         {lines.filter(Boolean).map((line, i) => (
-          <p key={i} className="ai-p">{parseInline(line)}</p>
+          <p key={i} className="ai-p">{parseInline(line, onPageJump)}</p>
         ))}
       </div>
     </div>
@@ -179,7 +560,6 @@ function ImageModal({ src, alt, credit, onClose }) {
   useEffect(() => {
     const handler = (e) => { if (e.key === 'Escape') onClose() }
     window.addEventListener('keydown', handler)
-    // Prevent body scroll when modal open
     document.body.style.overflow = 'hidden'
     return () => {
       window.removeEventListener('keydown', handler)
@@ -214,37 +594,55 @@ async function fetchSearchImage(query) {
   const key = query.toLowerCase().trim()
   if (_imgCache.has(key)) return _imgCache.get(key)
 
-  const signal = AbortSignal.timeout ? AbortSignal.timeout(7000) : undefined
+  const signal = AbortSignal.timeout ? AbortSignal.timeout(8000) : undefined
 
-  const tryGetThumb = async (title) => {
+  const tryWikiThumb = async (title) => {
     const res = await fetch(
       `https://en.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(title)}&prop=pageimages&format=json&pithumbsize=700&origin=*`,
       { signal }
     )
     const data = await res.json()
-    const pages = data?.query?.pages
-    const page  = pages && Object.values(pages)[0]
+    const page = Object.values(data?.query?.pages || {})[0]
     if (page?.thumbnail?.source && page.pageid !== -1)
       return { url: page.thumbnail.source, credit: 'Wikipedia', title: page.title }
     return null
   }
 
+  const tryCommons = async (q) => {
+    const searchRes = await fetch(
+      `https://commons.wikimedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(q)}&srnamespace=6&srlimit=6&format=json&origin=*`,
+      { signal }
+    )
+    const hits = (await searchRes.json())?.query?.search || []
+    for (const hit of hits) {
+      const infoRes = await fetch(
+        `https://commons.wikimedia.org/w/api.php?action=query&titles=${encodeURIComponent(hit.title)}&prop=imageinfo&iiprop=url|mime&iiurlwidth=700&format=json&origin=*`,
+        { signal }
+      )
+      const page = Object.values((await infoRes.json())?.query?.pages || {})[0]
+      const info = page?.imageinfo?.[0]
+      if (info?.thumburl && /^image\//i.test(info.mime || ''))
+        return { url: info.thumburl, credit: 'Wikimedia Commons', title: hit.title.replace('File:', '') }
+    }
+    return null
+  }
+
   try {
-    // 1. exact title match
-    const exact = await tryGetThumb(query)
+    const exact = await tryWikiThumb(query)
     if (exact) { _imgCache.set(key, exact); return exact }
 
-    // 2. search + first 3 results
     const searchRes = await fetch(
       `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&srlimit=3&format=json&origin=*`,
       { signal }
     )
-    const searchData = await searchRes.json()
-    const hits = searchData?.query?.search || []
-    for (const hit of hits) {
-      const result = await tryGetThumb(hit.title)
-      if (result) { _imgCache.set(key, result); return result }
+    for (const hit of (await searchRes.json())?.query?.search || []) {
+      const r = await tryWikiThumb(hit.title)
+      if (r) { _imgCache.set(key, r); return r }
     }
+
+    const commons = await tryCommons(query)
+    if (commons) { _imgCache.set(key, commons); return commons }
+
   } catch { /* timeout / network */ }
 
   _imgCache.set(key, null)
@@ -323,28 +721,93 @@ function InlineImage({ src, alt, searchQuery }) {
   )
 }
 
+// ── Citation Chip ──────────────────────────────────────────────────────────────
+function CitationChip({ page, onPageJump }) {
+  return (
+    <button
+      className="ai-cite-chip"
+      type="button"
+      onClick={() => onPageJump?.(page)}
+      title={`Jump to page ${page}`}
+      aria-label={`Go to page ${page}`}
+    >
+      p.{page}
+    </button>
+  )
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
-const modelLabel = (modelId) => getProvider(modelId)?.name || 'No model'
+const modelLabel = (modelId) => {
+  if (!modelId) return 'No model'
+  const byProvider = getProvider(modelId)
+  if (byProvider) return byProvider.name
+  // search by model id across all providers (modelId might be a model string not a provider id)
+  for (const p of PROVIDERS) {
+    if (p.models?.some(m => m.id === modelId)) return p.name
+    if (p.model === modelId) return p.name
+  }
+  return modelId
+}
 const formatTime = (ts) => {
   try { return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) } catch { return '' }
 }
 
+// ── Smart Typography ──────────────────────────────────────────────────────────
+function applyTypography(text) {
+  if (typeof text !== 'string') return text
+  return text
+    .replace(/---/g, '—')
+    .replace(/--/g, '—')
+    .replace(/\.\.\./g, '…')
+    .replace(/\(c\)/gi, '©')
+    .replace(/\(r\)/gi, '®')
+    .replace(/\(tm\)/gi, '™')
+    .replace(/\b1\/2\b/g, '½')
+    .replace(/\b3\/4\b/g, '¾')
+    .replace(/(^|\s)"([^"]+)"(?=\s|$|[.,!?])/g, '$1“$2”')
+}
+
 // ── Inline parser ─────────────────────────────────────────────────────────────
-// Supports: ***bold+italic***, **bold**, *italic*, `code`, ~~del~~, ==mark==, [[kbd]]
-function parseInline(text) {
+function parseInline(rawText, onPageJump = null) {
+  if (typeof rawText !== 'string') return rawText
+  const text = applyTypography(rawText)
   const parts = []
-  const regex = /(\*\*\*(.+?)\*\*\*|\*\*(.+?)\*\*|\*(.+?)\*|`([^`]+)`|~~(.+?)~~|==(.+?)==|\[\[(.+?)\]\])/g
+  
+  const regex = /(?<progress>\[progress:(?<progVal>\d+)\])|(?<cite>\[p\.(?<citeVal>\d+)\])|(?<bbox>\[bbox:(?<bbPage>\d+):(?<bbX>[0-9.]+),(?<bbY>[0-9.]+),(?<bbW>[0-9.]+),(?<bbH>[0-9.]+)\])|(?<mathDisp>\$\$(?<mathDispVal>[^$]+?)\$\$)|(?<mathTooltip>\$(?<mathTtVal>[^$\n]+?)\|(?<mathTtTxt>[^$]+?)\$)|(?<mathIn>\$(?<mathInVal>[^$\n]+?)\$)|(?<link>\[(?<linkText>[^\]]+?)\]\((?<linkUrl>[^)]+?)\))|(?<badge>\[badge:(?<badgeCol>[a-zA-Z0-9_-]+):(?<badgeLbl>.+?)\])|(?<fn>\[\^(?<fnId>\d+)\])|(?<colortext>\{(?<colorName>[a-zA-Z]+)\}(?<colorVal>.*?)\{\/[a-zA-Z]+\})|(?<colorSwatch>#[A-Fa-f0-9]{3,8}|rgb\([^)]+\))|(?<boldItalic>\*\*\*(?<biVal>.+?)\*\*\*)|(?<bold>\*\*(?<bVal>.+?)\*\*)|(?<italic>\*(?<iVal>.+?)\*)|(?<code>`(?<codeVal>[^`]+)`)|(?<del>~~(?<delVal>.+?)~~)|(?<mark>==(?<markVal>.+?)==)|(?<kbdBracket>\[\[(?<kbdBVal>.+?)\]\])|(?<kbd>\^(?<kbdVal>[^\^]+)\^)|(?<sub>~(?<subVal>[^~]+)~)|(?<u>\+\+(?<uVal>[^\+]+)\+\+)|(?<bareUrl>https?:\/\/[^\s<]+[^<.,:;"')\]\s])/g
+
   let lastIndex = 0, ki = 0, match
+
   while ((match = regex.exec(text)) !== null) {
     if (match.index > lastIndex)
       parts.push(<span key={ki++}>{text.slice(lastIndex, match.index)}</span>)
-    if      (match[2] !== undefined) parts.push(<strong key={ki++}><em>{match[2]}</em></strong>)
-    else if (match[3] !== undefined) parts.push(<strong key={ki++}>{match[3]}</strong>)
-    else if (match[4] !== undefined) parts.push(<em key={ki++}>{match[4]}</em>)
-    else if (match[5] !== undefined) parts.push(<code key={ki++} className="ai-inline-code">{match[5]}</code>)
-    else if (match[6] !== undefined) parts.push(<del key={ki++} className="ai-del">{match[6]}</del>)
-    else if (match[7] !== undefined) parts.push(<mark key={ki++} className="ai-mark">{match[7]}</mark>)
-    else if (match[8] !== undefined) parts.push(<kbd key={ki++} className="ai-kbd">{match[8]}</kbd>)
+
+    const g = match.groups
+    if (g.progress) parts.push(<progress key={ki++} className="ai-progress" value={g.progVal} max="100" title={`${g.progVal}%`} />)
+    else if (g.cite) {
+      const pageNum = parseInt(g.citeVal, 10)
+      parts.push(onPageJump ? <CitationChip key={ki++} page={pageNum} onPageJump={onPageJump} /> : <span key={ki++} className="ai-cite-chip-static">p.{pageNum}</span>)
+    }
+    else if (g.bbox) parts.push(<button key={ki++} className="ai-bbox-chip" onClick={() => onPageJump?.({page: parseInt(g.bbPage,10), x: parseFloat(g.bbX), y: parseFloat(g.bbY), w: parseFloat(g.bbW), h: parseFloat(g.bbH)})}>[Box p.{g.bbPage}]</button>)
+    else if (g.mathDisp) parts.push(<MathDisplay key={ki++} tex={g.mathDispVal} />)
+    else if (g.mathTooltip) parts.push(<span key={ki++} className="ai-math-tooltip" title={g.mathTtTxt}><MathInline tex={g.mathTtVal} /></span>)
+    else if (g.mathIn) parts.push(<MathInline key={ki++} tex={g.mathInVal} />)
+    else if (g.link) parts.push(<a key={ki++} href={g.linkUrl} target="_blank" rel="noreferrer" className="ai-link">{parseInline(g.linkText, onPageJump)}</a>)
+    else if (g.badge) parts.push(<span key={ki++} className={`ai-badge ai-badge-${g.badgeCol.toLowerCase()}`}>{g.badgeLbl}</span>)
+    else if (g.fn) parts.push(<sup key={ki++} className="ai-footnote-ref" id={`fnref-${g.fnId}`}><a href={`#fn-${g.fnId}`}>{g.fnId}</a></sup>)
+    else if (g.colortext) parts.push(<span key={ki++} style={{ color: g.colorName }}>{parseInline(g.colorVal, onPageJump)}</span>)
+    else if (g.colorSwatch) parts.push(<span key={ki++} className="ai-color-swatch-wrap"><span className="ai-color-swatch" style={{backgroundColor: g.colorSwatch}}/>{g.colorSwatch}</span>)
+    else if (g.boldItalic) parts.push(<strong key={ki++}><em>{parseInline(g.biVal, onPageJump)}</em></strong>)
+    else if (g.bold) parts.push(<strong key={ki++}>{parseInline(g.bVal, onPageJump)}</strong>)
+    else if (g.italic) parts.push(<em key={ki++}>{parseInline(g.iVal, onPageJump)}</em>)
+    else if (g.code) parts.push(<code key={ki++} className="ai-inline-code">{g.codeVal}</code>)
+    else if (g.del) parts.push(<del key={ki++} className="ai-del">{parseInline(g.delVal, onPageJump)}</del>)
+    else if (g.mark) parts.push(<mark key={ki++} className="ai-mark">{parseInline(g.markVal, onPageJump)}</mark>)
+    else if (g.kbdBracket) parts.push(<kbd key={ki++} className="ai-kbd">{parseInline(g.kbdBVal, onPageJump)}</kbd>)
+    else if (g.kbd) parts.push(<kbd key={ki++} className="ai-kbd">{parseInline(g.kbdVal, onPageJump)}</kbd>)
+    else if (g.sub) parts.push(<sub key={ki++}>{parseInline(g.subVal, onPageJump)}</sub>)
+    else if (g.u) parts.push(<u key={ki++}>{parseInline(g.uVal, onPageJump)}</u>)
+    else if (g.bareUrl) parts.push(<a key={ki++} href={g.bareUrl} target="_blank" rel="noreferrer" className="ai-link">{g.bareUrl}</a>)
+
     lastIndex = match.index + match[0].length
   }
   if (lastIndex < text.length) parts.push(<span key={ki++}>{text.slice(lastIndex)}</span>)
@@ -352,111 +815,253 @@ function parseInline(text) {
 }
 
 // ── Block renderer ────────────────────────────────────────────────────────────
-function renderFormattedText(text, streaming = false) {
+function renderFormattedText(text, streaming = false, onPageJump = null) {
   const lines = text.replace(/\\n/g, '\n').split('\n')
   const elements = []
-  let i = 0, listItems = [], listType = null, listKey = 0
+  let i = 0, listKey = 0
 
+  let listStack = []
   const flushList = () => {
-    if (!listItems.length) return
-    const Tag = listType === 'ol' ? 'ol' : 'ul'
-    elements.push(<Tag key={`list-${listKey++}`} className={`ai-${listType}`}>{listItems}</Tag>)
-    listItems = []; listType = null
+    while (listStack.length > 0) {
+      const top = listStack.pop()
+      const Tag = top.type === 'ol' ? 'ol' : 'ul'
+      const node = <Tag key={`list-${listKey++}`} className={`ai-${top.type}`}>{top.items}</Tag>
+      if (listStack.length > 0) {
+        const parent = listStack[listStack.length - 1]
+        if (parent.items.length > 0) {
+          const lastLi = parent.items[parent.items.length - 1]
+          parent.items[parent.items.length - 1] = <li key={lastLi.key} className={lastLi.props.className}>{lastLi.props.children}{node}</li>
+        } else {
+          parent.items.push(<li key={`li-${listKey++}`} style={{listStyle:'none'}}>{node}</li>)
+        }
+      } else {
+        elements.push(node)
+      }
+    }
   }
+
+  const closeListToIndent = (indent) => {
+    while (listStack.length > 0 && listStack[listStack.length - 1].indent > indent) {
+      const top = listStack.pop()
+      const Tag = top.type === 'ol' ? 'ol' : 'ul'
+      const node = <Tag key={`list-${listKey++}`} className={`ai-${top.type}`}>{top.items}</Tag>
+      if (listStack.length > 0) {
+        const parent = listStack[listStack.length - 1]
+        if (parent.items.length > 0) {
+          const lastLi = parent.items[parent.items.length - 1]
+          parent.items[parent.items.length - 1] = <li key={lastLi.key} className={lastLi.props.className}>{lastLi.props.children}{node}</li>
+        } else {
+          parent.items.push(<li key={`li-${listKey++}`} style={{listStyle:'none'}}>{node}</li>)
+        }
+      } else {
+        elements.push(node)
+      }
+    }
+  }
+
+  let dlItems = []
+  const flushDl = () => {
+    if (dlItems.length > 0) {
+      elements.push(<dl key={`dl-${listKey++}`} className="ai-dl">{dlItems}</dl>)
+      dlItems = []
+    }
+  }
+
+  let footnotes = []
+  const flushFootnotes = () => {
+    if (footnotes.length > 0) {
+      elements.push(
+        <div key={`fn-${listKey++}`} className="ai-footnotes">
+          <hr className="ai-hr" />
+          <ol className="ai-footnote-list">
+            {footnotes.map(fn => (
+              <li key={fn.id} id={`fn-${fn.id}`} className="ai-footnote-item">
+                {parseInline(fn.text, onPageJump)} <a href={`#fnref-${fn.id}`} className="ai-footnote-backref">↩</a>
+              </li>
+            ))}
+          </ol>
+        </div>
+      )
+      footnotes = []
+    }
+  }
+
+  const flushAll = () => { flushList(); flushDl() }
 
   while (i < lines.length) {
     const raw  = lines[i]
     const line = raw.trim()
 
-    // Fenced code block
     if (line.startsWith('```')) {
-      flushList()
+      flushAll()
       const lang = line.slice(3).trim(); const codeLines = []
       i++
       while (i < lines.length && !lines[i].trim().startsWith('```')) { codeLines.push(lines[i]); i++ }
-      elements.push(<CodeBlock key={`code-${i}`} lang={lang} code={codeLines.join('\n')} />)
+      if (lang === 'mermaid') elements.push(<MermaidBlock key={`code-${i}`} code={codeLines.join('\n')} />)
+      else if (lang === 'filetree') elements.push(<FileTree key={`code-${i}`} code={codeLines.join('\n')} />)
+      else if (lang === 'chart') elements.push(<ChartBlock key={`code-${i}`} code={codeLines.join('\n')} />)
+      else if (lang === 'map') elements.push(<MapBlock key={`code-${i}`} code={codeLines.join('\n')} />)
+      else if (lang === 'diff') elements.push(<RichDiffBlock key={`code-${i}`} code={codeLines.join('\n')} />)
+      else if (lang === 'timeline') elements.push(<TimelineBlock key={`code-${i}`} code={codeLines.join('\n')} onPageJump={onPageJump} />)
+      else if (lang === 'kanban') elements.push(<KanbanBlock key={`code-${i}`} code={codeLines.join('\n')} onPageJump={onPageJump} />)
+      else if (['py', 'python', 'js', 'javascript'].includes(lang.toLowerCase())) elements.push(<SandboxBlock key={`code-${i}`} lang={lang} code={codeLines.join('\n')} />)
+      else elements.push(<CodeBlock key={`code-${i}`} lang={lang} code={codeLines.join('\n')} />)
       i++; continue
     }
 
-    // Table
-    if (line.startsWith('|')) {
-      flushList()
-      const tableLines = []
-      while (i < lines.length && lines[i].trim().startsWith('|')) { tableLines.push(lines[i].trim()); i++ }
-      const dataRows = tableLines.filter(r => !/^\|[-| :]+\|$/.test(r))
-      if (dataRows.length > 0) {
-        const parsedRows = dataRows.map(r => r.replace(/^\||\|$/g, '').split('|').map(c => c.trim()))
-        const [header, ...body] = parsedRows
-        elements.push(
-          <div key={`tbl-${i}`} className="ai-table-wrap">
-            <table className="ai-table">
-              <thead><tr>{header.map((cell, ci) => <th key={ci}>{parseInline(cell)}</th>)}</tr></thead>
-              <tbody>{body.map((row, ri) => (
-                <tr key={ri}>{row.map((cell, ci) => <td key={ci}>{parseInline(cell)}</td>)}</tr>
-              ))}</tbody>
-            </table>
-          </div>
-        )
-      }
-      continue
-    }
-
-    // ── Standalone image (block-level) ──────────────────────────────────────
-    // Syntax 1: ![alt text](https://direct-url.jpg)
-    // Syntax 2: ![alt text](search: heart diagram)   ← Wikipedia search
-    const imgMatch = line.match(/^!\[([^\]]*)\]\((.+)\)$/)
-    if (imgMatch) {
-      flushList()
-      const alt    = imgMatch[1]
-      const target = imgMatch[2].trim()
-      if (target.startsWith('search:')) {
-        elements.push(<InlineImage key={`img-${i}`} searchQuery={target.slice(7).trim()} alt={alt} />)
-      } else {
-        elements.push(<InlineImage key={`img-${i}`} src={target} alt={alt} />)
-      }
-      i++; continue
-    }
-
-    if (/^[-*_]{3,}$/.test(line))  { flushList(); elements.push(<hr key={`hr-${i}`} className="ai-hr" />); i++; continue }
-    if (line.startsWith('### '))   { flushList(); elements.push(<h3 key={`h3-${i}`} className="ai-h3">{parseInline(line.slice(4))}</h3>); i++; continue }
-    if (line.startsWith('## '))    { flushList(); elements.push(<h2 key={`h2-${i}`} className="ai-h2">{parseInline(line.slice(3))}</h2>); i++; continue }
-    if (line.startsWith('# '))     { flushList(); elements.push(<h1 key={`h1-${i}`} className="ai-h1">{parseInline(line.slice(2))}</h1>); i++; continue }
-
-    // ── Task list: - [x] or - [ ] ──────────────────────────────────────────
-    if (/^[-*]\s+\[[ xX]\]/.test(line)) {
-      if (listType === 'ol') flushList()
-      listType = 'ul'
-      const checked  = /^[-*]\s+\[[xX]\]/.test(line)
-      const taskText = line.replace(/^[-*]\s+\[[ xX]\]\s*/, '')
-      listItems.push(
-        <li key={`li-${i}`} className="ai-task-item">
-          <span className={`ai-task-check${checked ? ' checked' : ''}`} aria-hidden="true" />
-          <span className={checked ? 'ai-task-done' : ''}>{parseInline(taskText)}</span>
-        </li>
+    if (line.startsWith('|||') && line.endsWith('|||') && line.length > 3) {
+      flushAll()
+      const cols = line.split('|||').filter(Boolean)
+      elements.push(
+        <div key={`col-${i}`} className="ai-columns">
+          {cols.map((c, idx) => <div key={idx} className="ai-column">{parseInline(c.trim(), onPageJump)}</div>)}
+        </div>
       )
       i++; continue
     }
 
-    // Unordered list
-    if (/^[-*•]\s+/.test(line)) {
-      if (listType === 'ol') flushList()
-      listType = 'ul'
-      listItems.push(<li key={`li-${i}`}>{parseInline(line.replace(/^[-*•]\s+/, ''))}</li>)
-      i++; continue
-    }
-    // Ordered list
-    if (/^\d+\.\s+/.test(line)) {
-      if (listType === 'ul') flushList()
-      listType = 'ol'
-      listItems.push(<li key={`li-${i}`}>{parseInline(line.replace(/^\d+\.\s+/, ''))}</li>)
+    if (line.startsWith('+++')) {
+      flushAll()
+      const title = line.slice(3).trim() || 'Details'
+      const contentLines = []
+      i++
+      while (i < lines.length && !lines[i].trim().startsWith('+++')) { contentLines.push(lines[i]); i++ }
+      elements.push(
+        <details key={`details-${i}`} className="ai-details">
+          <summary className="ai-details-summary">{title}</summary>
+          <div className="ai-details-content">{renderFormattedText(contentLines.join('\n'), false, onPageJump)}</div>
+        </details>
+      )
       i++; continue
     }
 
-    // Blockquote / Callout
-    if (line.startsWith('> ')) {
+    if (line === '$$') {
+      flushAll()
+      const mathLines = []
+      i++
+      while (i < lines.length && lines[i].trim() !== '$$') { mathLines.push(lines[i]); i++ }
+      elements.push(<MathDisplay key={`math-${i}`} tex={mathLines.join('\n').trim()} />)
+      i++; continue
+    }
+    if (line.startsWith('$$') && line.endsWith('$$') && line.length > 4) {
+      flushAll()
+      elements.push(<MathDisplay key={`math-${i}`} tex={line.slice(2, -2).trim()} />)
+      i++; continue
+    }
+
+    if (line.startsWith('|')) {
+      flushAll()
+      const tableLines = []
+      let caption = null
+      while (i < lines.length && lines[i].trim().startsWith('|')) { tableLines.push(lines[i].trim()); i++ }
+      if (i < lines.length && lines[i].trim().startsWith('^')) {
+        caption = lines[i].trim().slice(1).trim()
+        i++
+      }
+      const parsedRows = tableLines.filter(r => r).map(r => r.replace(/^\||\\|$/g, '').split('|').map(c => c.trim()))
+      const sepRowIndex = parsedRows.findIndex(r => r.some(c => /^:?-+:?$/.test(c)))
+      let header = [], body = parsedRows, aligns = []
+      
+      if (sepRowIndex !== -1) {
+        aligns = parsedRows[sepRowIndex].map(c => {
+          if (c.startsWith(':') && c.endsWith(':')) return 'center'
+          if (c.endsWith(':')) return 'right'
+          return 'left'
+        })
+        header = parsedRows.slice(0, sepRowIndex)[0] || []
+        body = parsedRows.slice(sepRowIndex + 1)
+      } else if (parsedRows.length > 1) {
+        header = parsedRows[0]
+        body = parsedRows.slice(1)
+      }
+      
+      elements.push(
+        <AdvancedTable
+          key={`tbl-${i}`}
+          caption={caption ? parseInline(caption, onPageJump) : null}
+          headers={header.map(h => ({ text: h }))}
+          rows={body.map(r => r.map(c => ({ text: c })))}
+          aligns={aligns}
+          onPageJump={onPageJump}
+        />
+      )
+      continue
+    }
+
+    const imgMatch = line.match(/^!\[([^\]]*)\]\((.+)\)$/)
+    if (imgMatch) {
+      flushAll()
+      const alt    = imgMatch[1]
+      const target = imgMatch[2].trim()
+      if (target.startsWith('search:')) elements.push(<InlineImage key={`img-${i}`} searchQuery={target.slice(7).trim()} alt={alt} />)
+      else elements.push(<InlineImage key={`img-${i}`} src={target} alt={alt} />)
+      i++; continue
+    }
+
+    if (/^[-*_]{3,}$/.test(line))  { flushAll(); elements.push(<hr key={`hr-${i}`} className="ai-hr" />); i++; continue }
+    if (line.startsWith('### '))   { flushAll(); elements.push(<h3 key={`h3-${i}`} className="ai-h3">{parseInline(line.slice(4), onPageJump)}</h3>); i++; continue }
+    if (line.startsWith('## '))    { flushAll(); elements.push(<h2 key={`h2-${i}`} className="ai-h2">{parseInline(line.slice(3), onPageJump)}</h2>); i++; continue }
+    if (line.startsWith('# '))     { flushAll(); elements.push(<h1 key={`h1-${i}`} className="ai-h1">{parseInline(line.slice(2), onPageJump)}</h1>); i++; continue }
+
+    const fnMatch = line.match(/^\[\^(\d+)\]:\s*(.*)/)
+    if (fnMatch) {
+      flushAll()
+      footnotes.push({ id: fnMatch[1], text: fnMatch[2] })
+      i++; continue
+    }
+
+    const listMatch = raw.match(/^(\s*)([-*•]|\d+\.)\s+(.*)/)
+    if (listMatch) {
+      flushDl()
+      const indent = listMatch[1].length
+      const marker = listMatch[2]
+      const content = listMatch[3]
+      const type = /^\d/.test(marker) ? 'ol' : 'ul'
+      const checkedMatch = content.match(/^\[([ xX])\]\s+(.*)/)
+      let parsedContent = content
+      let checked = false
+      let isTask = false
+
+      if (checkedMatch) {
+        isTask = true
+        checked = checkedMatch[1].toLowerCase() === 'x'
+        parsedContent = checkedMatch[2]
+      }
+
+      closeListToIndent(indent)
+      
+      if (listStack.length === 0 || listStack[listStack.length - 1].indent < indent || listStack[listStack.length - 1].type !== type) {
+        listStack.push({ indent, type, items: [] })
+      }
+
+      const liContent = isTask ? (
+        <>
+          <span className={`ai-task-check${checked ? ' checked' : ''}`} aria-hidden="true" />
+          <span className={checked ? 'ai-task-done' : ''}>{parseInline(parsedContent, onPageJump)}</span>
+        </>
+      ) : parseInline(parsedContent, onPageJump)
+
+      listStack[listStack.length - 1].items.push(
+        <li key={`li-${listKey++}`} className={isTask ? 'ai-task-item' : ''}>{liContent}</li>
+      )
+      i++; continue
+    }
+
+    if (line.startsWith(': ')) {
       flushList()
+      const def = line.slice(2)
+      if (dlItems.length === 0) {
+        const term = elements.pop()
+        dlItems.push(<dt key={`dt-${listKey++}`}>{term?.props?.children || 'Term'}</dt>)
+      }
+      dlItems.push(<dd key={`dd-${listKey++}`}>{parseInline(def, onPageJump)}</dd>)
+      i++; continue
+    }
+
+    if (line.startsWith('> ')) {
+      flushAll()
       const firstContent = line.slice(2)
-      const calloutMatch = firstContent.match(/^\[!(note|tip|warning|caution|important)\]\s*/i)
+      const calloutMatch = firstContent.match(/^\[!(note|info|tip|success|warning|danger|caution|important|question|bug)\]\s*/i)
       const bqLines = []
       if (!calloutMatch) bqLines.push(firstContent)
       i++
@@ -464,25 +1069,26 @@ function renderFormattedText(text, streaming = false) {
         bqLines.push(lines[i].trim().slice(2)); i++
       }
       if (calloutMatch) {
-        elements.push(<Callout key={`callout-${i}`} type={calloutMatch[1].toLowerCase()} lines={bqLines} />)
+        elements.push(<Callout key={`callout-${i}`} type={calloutMatch[1].toLowerCase()} lines={bqLines} onPageJump={onPageJump} />)
       } else {
         elements.push(
           <blockquote key={`bq-${i}`} className="ai-blockquote">
-            {bqLines.map((l, li) => <p key={li} className="ai-bq-p">{parseInline(l)}</p>)}
+            {bqLines.map((l, li) => <p key={li} className="ai-bq-p">{parseInline(l, onPageJump)}</p>)}
           </blockquote>
         )
       }
       continue
     }
 
-    if (!line) { flushList(); i++; continue }
+    if (!line) { flushAll(); i++; continue }
 
-    flushList()
-    elements.push(<p key={`p-${i}`} className="ai-p">{parseInline(line)}</p>)
+    flushAll()
+    elements.push(<p key={`p-${i}`} className="ai-p">{parseInline(line, onPageJump)}</p>)
     i++
   }
 
-  flushList()
+  flushAll()
+  flushFootnotes()
   if (streaming) elements.push(<span key="cursor" className="ai-stream-cursor" />)
   return elements
 }
@@ -499,15 +1105,31 @@ export default function AIPanel({
   currentPage, pageTexts,
   onOpenKeyVault,
   chatFont, fontSize,
+  fileName,
+  getPageImageRef,
+  selectedText,
+  setSelectedText,
+  onPageJump,
 }) {
-  const textareaRef  = useRef(null)
-  const chatRef      = useRef(null)
-  const isLoadingRef = useRef(false)
+  const textareaRef   = useRef(null)
+  const chatRef       = useRef(null)
+  const isLoadingRef  = useRef(false)
+  const controlRowRef = useRef(null)
 
-  const [modelMenuOpen, setModelMenuOpen] = useState(false)
-  const [templatesOpen, setTemplatesOpen] = useState(false)
-  const [copiedId, setCopiedId]           = useState(null)
-  const [micListening, setMicListening]   = useState(false)
+  const [modelMenuOpen,  setModelMenuOpen]  = useState(false)
+  const [templatesOpen,  setTemplatesOpen]  = useState(false)
+  const [contextOpen,    setContextOpen]    = useState(false)
+  const [copiedId,       setCopiedId]       = useState(null)
+  const [micListening,   setMicListening]   = useState(false)
+  const [visualMode,     setVisualMode]     = useState(false)
+  const [pageRangeInput, setPageRangeInput] = useState('')
+
+  const storageKey = fileName
+    ? `pdfistic-chat:${fileName.replace(/[^a-zA-Z0-9._-]/g, '_')}`
+    : 'pdfistic-chat'
+  const storageKeyRef = useRef(storageKey)
+  storageKeyRef.current = storageKey
+
   const recognitionRef      = useRef(null)
   const micPauseTimerRef    = useRef(null)
   const micBaseInputRef     = useRef('')
@@ -530,24 +1152,37 @@ export default function AIPanel({
     setMicListening(false)
   }
 
-  // ── Persist chat ──────────────────────────────────────────────────────────
   useEffect(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEY)
+      const saved = localStorage.getItem(storageKey)
       if (saved) {
         const parsed = JSON.parse(saved)
-        if (Array.isArray(parsed) && parsed.length > 0) setMessages(parsed)
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setMessages(parsed)
+          return
+        }
       }
-    } catch {}
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+      setMessages([])
+    } catch {
+      setMessages([])
+    }
+  }, [storageKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (messages.length === 0) { localStorage.removeItem(STORAGE_KEY); return }
+    const key = storageKeyRef.current
+    if (messages.length === 0) { localStorage.removeItem(key); return }
     try {
       const toSave = messages.filter(m => !m.streaming).slice(-60)
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave))
+      localStorage.setItem(key, JSON.stringify(toSave))
     } catch {}
   }, [messages])
+
+  useEffect(() => {
+    if (!selectedText) return
+    setInput(`"${selectedText}"\n\n`)
+    setSelectedText?.('')
+    window.setTimeout(() => textareaRef.current?.focus(), 120)
+  }, [selectedText]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const ta = textareaRef.current; if (!ta) return
@@ -564,7 +1199,19 @@ export default function AIPanel({
     try { recognitionRef.current?.abort?.() } catch {}
   }, [])
 
-  // ── Resize ────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!modelMenuOpen && !templatesOpen && !contextOpen) return
+    const onDown = (e) => {
+      if (controlRowRef.current && !controlRowRef.current.contains(e.target)) {
+        setModelMenuOpen(false)
+        setTemplatesOpen(false)
+        setContextOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [modelMenuOpen, templatesOpen, contextOpen])
+
   const startResize = (e) => {
     e.preventDefault()
     const startX = e.clientX, startW = width
@@ -581,20 +1228,47 @@ export default function AIPanel({
     window.addEventListener('pointerup', onUp)
   }
 
-  // ── Stream ────────────────────────────────────────────────────────────────
+  const parsePageRange = (raw) => {
+    if (!raw.trim()) return null
+    const pages = []
+    for (const part of raw.split(',')) {
+      const sides = part.trim().split('-')
+      if (sides.length === 2) {
+        const s = parseInt(sides[0]), e = parseInt(sides[1])
+        if (!isNaN(s) && !isNaN(e)) for (let p = s; p <= e; p++) pages.push(p)
+      } else {
+        const p = parseInt(part.trim())
+        if (!isNaN(p)) pages.push(p)
+      }
+    }
+    return pages.length ? pages : null
+  }
+
   const sendWithHistory = useCallback(async (userText, history, userTs = 0) => {
     if (isLoadingRef.current) return
     isLoadingRef.current = true
     const aiId  = Math.max(Date.now(), userTs + 1)
     const aiMsg = { role: 'ai', text: '', page: currentPage, model: selectedModel, timestamp: aiId, streaming: true }
     setMessages(prev => [...prev, aiMsg])
-    const builtMessages = buildMessages(history, userText, pageTexts, referCurrentPage, referPrevPage, currentPage)
+
+    const imageBase64 = visualMode ? (getPageImageRef?.current?.(currentPage) ?? null) : null
+    const pageRange = parsePageRange(pageRangeInput)
+
+    const builtMessages = buildMessages(
+      history, userText, pageTexts, referCurrentPage, referPrevPage, currentPage,
+      pageRange ? { pageRange } : {}
+    )
     let fullText = ''
     try {
-      await streamAI(selectedModel, apiKeys?.[selectedModel], builtMessages, apiModels?.[selectedModel], (chunk) => {
-        fullText += chunk
-        setMessages(prev => prev.map(m => m.timestamp === aiId ? { ...m, text: fullText } : m))
-      })
+      await streamAI(
+        selectedModel, apiKeys?.[selectedModel], builtMessages,
+        apiModels?.[selectedModel],
+        (chunk) => {
+          fullText += chunk
+          setMessages(prev => prev.map(m => m.timestamp === aiId ? { ...m, text: fullText } : m))
+        },
+        imageBase64
+      )
     } catch (err) {
       fullText = `Request failed:\n- ${err.message || 'Unknown error'}`
     }
@@ -602,7 +1276,8 @@ export default function AIPanel({
       m.timestamp === aiId ? { ...m, text: fullText || 'No response returned.', streaming: false } : m
     ))
     isLoadingRef.current = false
-  }, [selectedModel, apiKeys, apiModels, currentPage, pageTexts, referCurrentPage, referPrevPage, setMessages])
+  }, [selectedModel, apiKeys, apiModels, currentPage, pageTexts, referCurrentPage, referPrevPage,
+      setMessages, visualMode, getPageImageRef, pageRangeInput])
 
   const handleSend = async () => {
     const text = input.trim()
@@ -636,7 +1311,6 @@ export default function AIPanel({
     }).catch(() => {})
   }
 
-  // ── Mic ───────────────────────────────────────────────────────────────────
   const toggleMic = async () => {
     if (micListening || recognitionRef.current) { stopMicRecognition(); return }
 
@@ -712,7 +1386,6 @@ export default function AIPanel({
     if (messages[i].role === 'ai') { lastAiMsgIdx = i; break }
   }
 
-  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <aside
       className={`ai-panel ${open ? 'open' : ''}`}
@@ -726,42 +1399,69 @@ export default function AIPanel({
       <div className="ai-resizer" onPointerDown={startResize} />
       <div className="ai-panel-inner">
 
-        {/* Header */}
+        {/* ── Header ── */}
         <header className="ai-header">
           <div className="ai-header-row">
-            <div className="ai-icon-box"><BrainIcon /></div>
+            <span className="ai-live-dot" title="AI ready" />
             <div className="ai-header-info">
-              <span className="ai-title">PDF Assistant</span>
-              {selectedModel && <span className="ai-model-pill">{modelLabel(selectedModel)}</span>}
+              <span className="ai-title">Inferna</span>
+              {selectedModel && (
+                <span className="ai-model-pill">{modelLabel(selectedModel)}</span>
+              )}
             </div>
+            {referCurrentPage && (
+              <span className="ai-page-badge" title="Reading current page">
+                p.{currentPage}
+              </span>
+            )}
           </div>
         </header>
 
-        {/* Chat */}
+        {/* ── Chat area ── */}
         <div className="ai-chat" ref={chatRef}>
           {messages.length === 0 ? (
+
+            /* ── Empty state ── */
             <div className="ai-empty">
-              <div className="ai-empty-icon-wrap"><BrainIcon size={26} /></div>
-              <p className="ai-empty-title">PDF Assistant</p>
-              <p className="ai-empty-sub">Ask anything about this document — summaries, explanations, quiz questions, or key terms.</p>
-              <div className="ai-empty-chips">
+              <div className="ai-empty-hero">
+                <div className="ai-empty-icon-wrap">
+                  <BrainIcon size={24} />
+                </div>
+                <p className="ai-empty-title">Ask about this PDF</p>
+                <p className="ai-empty-sub">Citations appear as clickable page links.</p>
+              </div>
+
+              <div className="ai-empty-cards">
                 {PROMPT_TEMPLATES.map(t => (
-                  <button key={t.label} className="ai-empty-chip" type="button"
-                    onClick={() => setInput(t.text)}>{t.label}</button>
+                  <button
+                    key={t.label}
+                    className="ai-empty-card"
+                    type="button"
+                    onClick={() => {
+                      setInput(t.text)
+                      setTimeout(() => textareaRef.current?.focus(), 50)
+                    }}
+                  >
+                    <span className="ai-empty-card-emoji">{t.emoji}</span>
+                    <span className="ai-empty-card-label">{t.label}</span>
+                    <span className="ai-empty-card-desc">{t.desc}</span>
+                  </button>
                 ))}
               </div>
             </div>
+
           ) : (
+
+            /* ── Messages ── */
             <div className="ai-message-stack">
               {messages.map((msg, idx) => (
                 <div key={msg.timestamp} className={`ai-message-row ${msg.role}`}>
                   <div className={`ai-bubble${msg.streaming ? ' streaming' : ''}`}>
-                    {/* Streaming progress bar at top of bubble */}
                     {msg.role === 'ai' && msg.streaming && (
                       <div className="ai-stream-bar" aria-hidden="true" />
                     )}
                     {msg.role === 'ai'
-                      ? renderFormattedText(msg.text, msg.streaming && !msg.text)
+                      ? renderFormattedText(msg.text, msg.streaming && !msg.text, onPageJump)
                       : <p className="ai-p">{msg.text}</p>
                     }
                     {msg.role === 'ai' && msg.streaming && msg.text && <span className="ai-stream-cursor" />}
@@ -769,6 +1469,7 @@ export default function AIPanel({
                       <div className="typing-bubble"><span /><span /><span /></div>
                     )}
                   </div>
+
                   {!msg.streaming && (
                     <div className="ai-msg-actions">
                       <button className="ai-action-btn" type="button" title="Copy"
@@ -783,39 +1484,33 @@ export default function AIPanel({
                       )}
                     </div>
                   )}
+
                   <div className="ai-meta">
                     {modelLabel(msg.model)} · p.{msg.page || currentPage} · {formatTime(msg.timestamp)}
                   </div>
                 </div>
               ))}
             </div>
+
           )}
         </div>
 
-        {/* Page refs */}
-        <div className="ai-page-refs">
-          <label>
-            <input type="checkbox" checked={referCurrentPage} onChange={e => setReferCurrentPage(e.target.checked)} />
-            <span>Current (p.{currentPage || 1})</span>
-          </label>
-          <label>
-            <input type="checkbox" checked={referPrevPage} disabled={currentPage <= 1}
-              onChange={e => setReferPrevPage(e.target.checked)} />
-            <span>Previous (p.{Math.max(1, currentPage - 1)})</span>
-          </label>
-        </div>
-
-        {/* Model + Templates */}
-        <div className="ai-control-row">
+        {/* ── Control row ── */}
+        <div className="ai-control-row" ref={controlRowRef}>
           {configuredModels.length === 0 ? (
             <button className="ai-add-key" type="button" onClick={onOpenKeyVault}>
               Add API key to get started →
             </button>
           ) : (
             <div className="ai-model-dropup">
-              <button className="ai-model-dropup-btn" type="button"
-                onClick={() => { setModelMenuOpen(o => !o); setTemplatesOpen(false) }}>
-                <span className="ai-model-dot" />{modelLabel(selectedModel)}<ChevronIcon />
+              <button
+                className="ai-model-dropup-btn"
+                type="button"
+                onClick={() => { setModelMenuOpen(o => !o); setTemplatesOpen(false); setContextOpen(false) }}
+              >
+                <span className="ai-model-dot" />
+                {modelLabel(selectedModel)}
+                <ChevronIcon />
               </button>
               {modelMenuOpen && (
                 <div className="ai-model-menu">
@@ -830,42 +1525,119 @@ export default function AIPanel({
               )}
             </div>
           )}
+
+          <div className="ai-context-dropup">
+            <button
+              className={`ai-context-btn${(referCurrentPage || referPrevPage || visualMode || pageRangeInput) ? ' has-context' : ''}`}
+              type="button"
+              onClick={() => { setContextOpen(o => !o); setModelMenuOpen(false); setTemplatesOpen(false) }}
+              title="Page context settings"
+            >
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                <path d="M14 2v6h6M9 13h6M9 17h4"/>
+              </svg>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0, flex: '1 1 0' }}>Context</span>
+              {(referCurrentPage || referPrevPage || visualMode || pageRangeInput) && (
+                <span className="ai-context-dot" />
+              )}
+              <ChevronIcon />
+            </button>
+            {contextOpen && (
+              <div className="ai-context-menu">
+                <div className="ai-ctx-section-label">Page context</div>
+                <label className="ai-ctx-row">
+                  <input type="checkbox" checked={referCurrentPage}
+                    onChange={e => setReferCurrentPage(e.target.checked)} />
+                  <span>Current page (p.{currentPage || 1})</span>
+                </label>
+                <label className="ai-ctx-row">
+                  <input type="checkbox" checked={referPrevPage} disabled={currentPage <= 1}
+                    onChange={e => setReferPrevPage(e.target.checked)} />
+                  <span>Previous page (p.{Math.max(1, currentPage - 1)})</span>
+                </label>
+                <div className="ai-ctx-divider" />
+                <div className="ai-ctx-section-label">Visual mode</div>
+                <label className="ai-ctx-row" title="Send a screenshot of the current page (Gemini only)">
+                  <input type="checkbox" checked={visualMode}
+                    onChange={e => setVisualMode(e.target.checked)} />
+                  <span>📷 Send page image <span className="ai-ctx-note">Gemini only</span></span>
+                </label>
+                <div className="ai-ctx-divider" />
+                <div className="ai-ctx-section-label">Page range</div>
+                <input
+                  className="ai-ctx-range-input"
+                  type="text"
+                  value={pageRangeInput}
+                  onChange={e => setPageRangeInput(e.target.value)}
+                  placeholder="e.g. 1-5, 8, 12"
+                  title="Override context with specific pages"
+                />
+                {pageRangeInput && (
+                  <button className="ai-ctx-clear" type="button"
+                    onClick={() => setPageRangeInput('')}>
+                    Clear range
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
           <div className="ai-templates-dropup">
-            <button className="ai-templates-btn" type="button" disabled={isLoading}
-              onClick={() => { setTemplatesOpen(o => !o); setModelMenuOpen(false) }}>
-              <SparkleIcon />Templates<ChevronIcon />
+            <button
+              className="ai-templates-btn"
+              type="button"
+              disabled={isLoading}
+              onClick={() => { setTemplatesOpen(o => !o); setModelMenuOpen(false); setContextOpen(false) }}
+            >
+              <SparkleIcon />
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0, flex: '1 1 0' }}>Templates</span>
+              <ChevronIcon />
             </button>
             {templatesOpen && (
               <div className="ai-templates-menu">
                 {PROMPT_TEMPLATES.map(t => (
                   <button key={t.label} type="button"
-                    onClick={() => { setInput(t.text); setTemplatesOpen(false) }}>{t.label}</button>
+                    onClick={() => { setInput(t.text); setTemplatesOpen(false) }}>
+                    {t.emoji} {t.label}
+                  </button>
                 ))}
               </div>
             )}
           </div>
         </div>
 
-        {/* Composer */}
+        {/* ── Composer ── */}
         <div className="ai-composer">
-          <textarea
-            ref={textareaRef} className="ai-input"
-            value={input} rows={1}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Ask about this PDF…"
-            disabled={isLoading}
-          />
-          <button className={`ai-mic-btn${micListening ? ' listening' : ''}`}
-            type="button" onClick={toggleMic}
-            title={micListening ? 'Stop listening' : 'Voice input'}
-            disabled={isLoading}>
-            <MicIcon active={micListening} />
-          </button>
-          <button className="ai-send-btn" type="button"
-            onClick={handleSend} disabled={!input.trim() || isLoading}>
-            <SendIcon />
-          </button>
+          <div className="ai-composer-inner">
+            <textarea
+              ref={textareaRef}
+              className="ai-input"
+              value={input}
+              rows={1}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="Ask about this PDF…"
+              disabled={isLoading}
+            />
+            <button
+              className={`ai-mic-btn${micListening ? ' listening' : ''}`}
+              type="button"
+              onClick={toggleMic}
+              title={micListening ? 'Stop listening' : 'Voice input'}
+              disabled={isLoading}
+            >
+              <MicIcon active={micListening} />
+            </button>
+            <button
+              className="ai-send-btn"
+              type="button"
+              onClick={handleSend}
+              disabled={!input.trim() || isLoading}
+            >
+              <SendIcon />
+            </button>
+          </div>
         </div>
 
       </div>

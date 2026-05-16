@@ -13,6 +13,8 @@ export default function Toolbar({
   currentPage, totalPages, onPageChange, pdfDoc,
   // Sidebar
   setSidebarOpen,
+  // Go home
+  onGoHome,
   // File
   onOpenFile,
   // Highlight
@@ -25,10 +27,10 @@ export default function Toolbar({
   theme,
   // Settings panel props ─────────────────────────────────────────────────────
   zoom, setZoom, fitMode, setFitMode, rotation, setRotation,
+  penColor, setPenColor, penSize, setPenSize,
   setTheme,
   setHighlightColor,
   fontId, setFontId, fontSize, setFontSize,
-  onCreateDesktopShortcut, shortcutStatus,
   onDownload, onOpenKeyVault,
   aiMessages, onExportChat, onClearChat, aiIsLoading,
 }) {
@@ -79,6 +81,15 @@ export default function Toolbar({
               onClick={() => setSidebarOpen(s => !s)} title="Sidebar (Ctrl+B)">
               <Icon d="M3 12h18M3 6h18M3 18h18" />
             </button>
+            {pdfDoc && onGoHome && (
+              <>
+                <div className="tb-group-divider" />
+                <button className="tb-btn icon-btn home-btn" type="button"
+                  onClick={onGoHome} title="Back to home">
+                  <Icon d="M3 12l9-9 9 9M5 10v9a1 1 0 0 0 1 1h4v-5h4v5h4a1 1 0 0 0 1-1v-9" size={14} />
+                </button>
+              </>
+            )}
             <div className="tb-group-divider" />
             <button className="tb-btn open-btn" type="button"
               onClick={onOpenFile} title="Open PDF (Ctrl+O)">
@@ -147,7 +158,31 @@ export default function Toolbar({
 
         {/* ── RIGHT ── highlight tools + settings ── */}
         <div className="tb-right">
+
           <div className="tb-group">
+            <button
+              className={`tb-btn icon-btn ${toolMode === 'pen' ? 'active' : ''}`}
+              type="button"
+              onClick={() => setToolMode(toolMode === 'pen' ? 'select' : 'pen')}
+              disabled={dis} title="Pen Tool">
+              <Icon d="M4 21l4-4 10-10 4-4a2.2 2.2 0 0 0 0-3.1 2.2 2.2 0 0 0-3.1 0l-4 4-10 10-4 4v2h2z" />
+              {toolMode === 'pen' && (
+                <span
+                  className="tb-color-pip"
+                  style={penColor === 'rainbow'
+                    ? { background: 'conic-gradient(hsl(0,100%,55%),hsl(90,100%,55%),hsl(180,100%,55%),hsl(270,100%,55%),hsl(360,100%,55%))' }
+                    : { background: penColor }
+                  }
+                />
+              )}
+            </button>
+            <button
+              className={`tb-btn icon-btn ${toolMode === 'eraser' ? 'active' : ''}`}
+              type="button"
+              onClick={() => setToolMode(toolMode === 'eraser' ? 'select' : 'eraser')}
+              disabled={dis} title="Eraser Tool">
+              <Icon d="M16 3H8L3 8v6l5 5h8l5-5V8l-5-5zM16 3v5H8V3" />
+            </button>
             <button
               className={`tb-btn icon-btn ${toolMode === 'highlight' ? 'active' : ''}`}
               type="button"
@@ -186,12 +221,13 @@ export default function Toolbar({
         theme={theme} pdfDoc={pdfDoc}
         zoom={zoom} setZoom={setZoom} fitMode={fitMode} setFitMode={setFitMode}
         rotation={rotation} setRotation={setRotation}
+        penColor={penColor} setPenColor={setPenColor}
+        penSize={penSize} setPenSize={setPenSize}
         setTheme={setTheme}
         highlightColor={highlightColor} setHighlightColor={setHighlightColor}
+        setToolMode={setToolMode}
         fontId={fontId} setFontId={setFontId}
         fontSize={fontSize} setFontSize={setFontSize}
-        onCreateDesktopShortcut={onCreateDesktopShortcut}
-        shortcutStatus={shortcutStatus}
         onDownload={onDownload}
         onOpenKeyVault={onOpenKeyVault}
         aiMessages={aiMessages}

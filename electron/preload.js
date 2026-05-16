@@ -1,7 +1,7 @@
 const { contextBridge, ipcRenderer } = require('electron')
 
 contextBridge.exposeInMainWorld('electronAPI', {
-  openFileDialog: () => ipcRenderer.invoke('open-file-dialog'),
+  openFileDialog: (options) => ipcRenderer.invoke('open-file-dialog', options),
   createDesktopShortcut: () => ipcRenderer.invoke('create-desktop-shortcut'),
   isMaximized: () => ipcRenderer.invoke('is-maximized'),
   readFile: (fp) => ipcRenderer.invoke('read-file', fp),
